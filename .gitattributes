@@ -1,0 +1,9 @@
+# Unix endings for everything the CI stack and WSL tooling read, so a
+# future `git add` never CRLF-ifies a bash script or re-formats sources.
+*.sh text eol=lf
+*.lua text eol=lf
+*.toc text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.md text eol=lf

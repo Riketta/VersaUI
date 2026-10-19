@@ -1,0 +1,7 @@
+## Interface: 120100
+## Title: VersaUI
+## Notes: Minor default-UI modifications.
+## Author: Riketta
+## Version: 0.1.0
+
+VersaUI.lua
