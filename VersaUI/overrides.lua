@@ -176,7 +176,11 @@ local function GetFactionColorFrames()
     return frames
 end
 
---- Purely cosmetic (SetVertexColor), so this is safe during combat.
+--- Purely cosmetic (SetVertexColor/SetAlpha), so this is safe during combat.
+--- Disabled hides the texture entirely: the game only ever writes the vertex
+--- color, never the alpha, so SetAlpha(0) survives every recolor path. This
+--- matters because not all flavors drive the color through CheckFaction -
+--- the camelot classic client has no CheckFaction at all.
 ---@param frame any
 ---@param disabled boolean
 local function ApplyFactionColor(frame, disabled)
@@ -185,11 +189,23 @@ local function ApplyFactionColor(frame, disabled)
     if contentMain == nil or contentMain.ReputationColor == nil then
         return
     end
+    local color = contentMain.ReputationColor
     if disabled then
-        contentMain.ReputationColor:SetVertexColor(1, 1, 1, 1)
-    elseif frame.CheckFaction ~= nil then
-        -- Restore Blizzard's exact semantics (faction color, tap-denied grey).
-        frame:CheckFaction()
+        color:SetVertexColor(1, 1, 1, 1)
+        color:SetAlpha(0)
+    else
+        color:SetAlpha(1)
+        if frame.CheckFaction ~= nil then
+            -- Restore Blizzard's exact semantics (faction color, tap-denied grey).
+            frame:CheckFaction()
+        end
+    end
+end
+
+---@param disabled boolean
+local function ApplyFactionColorToAll(disabled)
+    for _, frame in ipairs(GetFactionColorFrames()) do
+        ApplyFactionColor(frame, disabled)
     end
 end
 
@@ -296,10 +312,7 @@ function Overrides.ApplyFeature(id)
     end
 
     if id == "factionColorDisabled" then
-        local disabled = (db.factionColorDisabled == true)
-        for _, factionFrame in ipairs(GetFactionColorFrames()) do
-            ApplyFactionColor(factionFrame, disabled)
-        end
+        ApplyFactionColorToAll(db.factionColorDisabled == true)
         return
     end
 
@@ -354,9 +367,7 @@ function Overrides.ApplyAll()
         Overrides.ApplyFeature("petAurasOnTop")
     end
     if db.factionColorDisabled then
-        for _, frame in ipairs(GetFactionColorFrames()) do
-            ApplyFactionColor(frame, true)
-        end
+        ApplyFactionColorToAll(true)
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")
@@ -376,27 +387,38 @@ function Overrides.Init(overridesDB)
     eventFrame:RegisterEvent("PLAYER_LOGIN")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
+    eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
+    eventFrame:RegisterEvent("UNIT_FACTION")
     eventFrame:SetScript("OnEvent", function(_, event)
         if event == "PLAYER_LOGIN" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
             Overrides.ApplyAll()
         elseif event == "PLAYER_REGEN_ENABLED" then
             guard:FlushPending()
+        elseif event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_FOCUS_CHANGED" or event == "UNIT_FACTION" then
+            -- Not every flavor recolors through CheckFaction, so re-whiten on
+            -- the unit-change events themselves.
+            if db ~= nil and db.factionColorDisabled then
+                ApplyFactionColorToAll(true)
+            end
         end
     end)
 
-    -- Flavor safety: camelot-classic shares most of this surface, but guard
-    -- each mixin so a missing one degrades a feature instead of erroring load.
-    if TargetSpellBarMixin ~= nil then
+    -- Flavor safety: guard the hook target itself, not just the mixin table -
+    -- hooksecurefunc errors when the method is missing (e.g. CheckFaction does
+    -- not exist on the camelot classic client), which would abort Init and
+    -- silently kill every hook registered after it.
+    if TargetSpellBarMixin ~= nil and TargetSpellBarMixin.AdjustPosition ~= nil then
         hooksecurefunc(TargetSpellBarMixin, "AdjustPosition", function(bar)
             Overrides.OnSpellBarAdjusted(bar)
         end)
     end
-    if TargetFrameMixin ~= nil then
+    if TargetFrameMixin ~= nil and TargetFrameMixin.CheckFaction ~= nil then
         hooksecurefunc(TargetFrameMixin, "CheckFaction", function(targetFrame)
             Overrides.OnCheckFaction(targetFrame)
         end)
     end
-    if ActionBarMixin ~= nil then
+    if ActionBarMixin ~= nil and ActionBarMixin.UpdateGridLayout ~= nil then
         hooksecurefunc(ActionBarMixin, "UpdateGridLayout", function(bar)
             Overrides.OnUpdateGridLayout(bar)
         end)
