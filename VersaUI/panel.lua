@@ -137,7 +137,11 @@ local function CreateWindow()
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-    frame:SetTitle("VersaUI Overrides")
+    -- BasicFrameTemplateWithInset has no SetTitle method; the title is a
+    -- named FontString on the template (SharedUIPanelTemplates.xml).
+    if frame.TitleText ~= nil then
+        frame.TitleText:SetText("VersaUI Overrides")
+    end
     tinsert(UISpecialFrames, "VersaUIOverridesPanel")
 
     local db = VersaUI.db.overrides
