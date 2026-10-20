@@ -141,7 +141,9 @@ end
 
 local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(520, 470)
+    -- Height derives from the feature row count (36px per row) plus the fixed
+    -- toggles/padding/notes sections, so adding rows can't overflow again.
+    frame:SetSize(520, 290 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
