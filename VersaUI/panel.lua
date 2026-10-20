@@ -166,7 +166,7 @@ local function CreateWindow()
     end)
     y = y - 30
 
-    local factionColor = CreateToggleRow("Disable target faction color", y)
+    local factionColor = CreateToggleRow("Disable unit frame faction color", y)
     factionColor:SetChecked(db.factionColorDisabled == true)
     factionColor:SetScript("OnClick", function(self)
         db.factionColorDisabled = (self:GetChecked() == true)

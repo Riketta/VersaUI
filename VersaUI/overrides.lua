@@ -155,17 +155,41 @@ local function ApplyPetAuras(enabled)
     end
 end
 
----@param targetFrame any
----@param disabled boolean
-local function ApplyFactionColor(targetFrame, disabled)
-    local content = targetFrame and targetFrame.TargetFrameContent
-    local contentMain = content and content.TargetFrameContentMain
-    if contentMain and contentMain.ReputationColor then
-        if disabled then
-            contentMain.ReputationColor:SetVertexColor(1, 1, 1, 1)
-        else
-            contentMain.ReputationColor:SetVertexColor(UnitSelectionColor(targetFrame.unit))
+--- Frames that own a ReputationColor element: the TargetFrameTemplate family
+--- (target, focus, boss frames). Safe on flavors without the element - the
+--- apply helper nil-guards it.
+---@return any[]
+local function GetFactionColorFrames()
+    local frames = {}
+    if TargetFrame ~= nil then
+        frames[#frames + 1] = TargetFrame
+    end
+    if FocusFrame ~= nil then
+        frames[#frames + 1] = FocusFrame
+    end
+    local bossContainer = GlobalFrame("BossTargetFrameContainer")
+    if bossContainer ~= nil and bossContainer.BossTargetFrames ~= nil then
+        for _, bossFrame in ipairs(bossContainer.BossTargetFrames) do
+            frames[#frames + 1] = bossFrame
         end
+    end
+    return frames
+end
+
+--- Purely cosmetic (SetVertexColor), so this is safe during combat.
+---@param frame any
+---@param disabled boolean
+local function ApplyFactionColor(frame, disabled)
+    local content = frame and frame.TargetFrameContent
+    local contentMain = content and content.TargetFrameContentMain
+    if contentMain == nil or contentMain.ReputationColor == nil then
+        return
+    end
+    if disabled then
+        contentMain.ReputationColor:SetVertexColor(1, 1, 1, 1)
+    elseif frame.CheckFaction ~= nil then
+        -- Restore Blizzard's exact semantics (faction color, tap-denied grey).
+        frame:CheckFaction()
     end
 end
 
@@ -271,6 +295,14 @@ function Overrides.ApplyFeature(id)
         return
     end
 
+    if id == "factionColorDisabled" then
+        local disabled = (db.factionColorDisabled == true)
+        for _, factionFrame in ipairs(GetFactionColorFrames()) do
+            ApplyFactionColor(factionFrame, disabled)
+        end
+        return
+    end
+
     local frame = ResolveFrame(id)
     if frame == nil then
         return
@@ -321,8 +353,10 @@ function Overrides.ApplyAll()
     if db.petAurasOnTop then
         Overrides.ApplyFeature("petAurasOnTop")
     end
-    if db.factionColorDisabled and TargetFrame ~= nil then
-        ApplyFactionColor(TargetFrame, true)
+    if db.factionColorDisabled then
+        for _, frame in ipairs(GetFactionColorFrames()) do
+            ApplyFactionColor(frame, true)
+        end
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")

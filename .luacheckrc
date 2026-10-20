@@ -46,7 +46,6 @@ files["VersaUI"] = {
 		"TargetSpellBarMixin",
 		"UISpecialFrames",
 		"UIParent",
-		"UnitSelectionColor",
 		"hooksecurefunc",
 		"tinsert",
 		"time",
