@@ -9,8 +9,8 @@ VersaUI.config = Config
 Config.LIMITS = {
     scaleMin = 0.3,
     scaleMax = 3,
-    offsetMin = -500,
-    offsetMax = 500,
+    offsetMin = -2000,
+    offsetMax = 2000,
     paddingMin = 0,
     paddingMax = 40,
 }
@@ -20,6 +20,7 @@ Config.LIMITS = {
 ---@field scale number
 ---@field offsetX number
 ---@field offsetY number
+---@field relativeToParent boolean
 
 ---@class VersaUIPaddingOverrideSettings
 ---@field enabled boolean
@@ -28,6 +29,7 @@ Config.LIMITS = {
 
 ---@class VersaUIOverridesConfig
 ---@field tot VersaUIFrameOverrideSettings
+---@field focusTot VersaUIFrameOverrideSettings
 ---@field targetCastBar VersaUIFrameOverrideSettings
 ---@field focusCastBar VersaUIFrameOverrideSettings
 ---@field petCastBar VersaUIFrameOverrideSettings
@@ -37,13 +39,14 @@ Config.LIMITS = {
 
 ---@return VersaUIFrameOverrideSettings
 local function DefaultFrameOverride()
-    return { enabled = false, scale = 1, offsetX = 0, offsetY = 0 }
+    return { enabled = false, scale = 1, offsetX = 0, offsetY = 0, relativeToParent = true }
 end
 
 ---@return VersaUIOverridesConfig
 function Config.GetDefaults()
     return {
         tot = DefaultFrameOverride(),
+        focusTot = DefaultFrameOverride(),
         targetCastBar = DefaultFrameOverride(),
         focusCastBar = DefaultFrameOverride(),
         petCastBar = DefaultFrameOverride(),
@@ -91,6 +94,10 @@ function Config.NormalizeFrameOverride(settings)
         Config.ClampValue(Config.ParseNumber(settings.offsetX, 0), Config.LIMITS.offsetMin, Config.LIMITS.offsetMax)
     settings.offsetY =
         Config.ClampValue(Config.ParseNumber(settings.offsetY, 0), Config.LIMITS.offsetMin, Config.LIMITS.offsetMax)
+    if settings.relativeToParent == nil then
+        settings.relativeToParent = true
+    end
+    settings.relativeToParent = (settings.relativeToParent == true)
     return settings
 end
 
@@ -131,7 +138,11 @@ function Config.Normalize(db)
         db.barPadding = { enabled = false, paddingX = 2, paddingY = 2 }
     end
 
+    if db.focusTot == nil then
+        db.focusTot = DefaultFrameOverride()
+    end
     Config.NormalizeFrameOverride(db.tot)
+    Config.NormalizeFrameOverride(db.focusTot)
     Config.NormalizeFrameOverride(db.targetCastBar)
     Config.NormalizeFrameOverride(db.focusCastBar)
     Config.NormalizeFrameOverride(db.petCastBar)

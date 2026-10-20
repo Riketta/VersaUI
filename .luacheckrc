@@ -32,6 +32,7 @@ files["VersaUI"] = {
 		"EventRegistry",
 		"CreateFrame",
 		"FocusFrame",
+		"FocusFrameMixin",
 		"GridLayoutUtil",
 		"GetBuildInfo",
 		"GetTime",

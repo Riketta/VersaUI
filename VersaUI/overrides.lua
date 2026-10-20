@@ -10,7 +10,7 @@ local VersaUI = VersaUI or {}
 local Overrides = {}
 VersaUI.overrides = Overrides
 
-Overrides.FEATURES = { "tot", "targetCastBar", "focusCastBar", "petCastBar" }
+Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "petCastBar" }
 
 local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
@@ -52,6 +52,8 @@ end
 local function ResolveFrame(id)
     if id == "tot" then
         return GlobalFrame("TargetFrameToT"), TargetFrame
+    elseif id == "focusTot" then
+        return GlobalFrame("FocusFrameToT"), FocusFrame
     elseif id == "targetCastBar" then
         return GlobalFrame("TargetFrameSpellBar"), TargetFrame
     elseif id == "focusCastBar" then
@@ -70,6 +72,8 @@ local function GetFrameSettings(id)
     end
     if id == "tot" then
         return db.tot
+    elseif id == "focusTot" then
+        return db.focusTot
     elseif id == "targetCastBar" then
         return db.targetCastBar
     elseif id == "focusCastBar" then
@@ -94,13 +98,23 @@ local function CaptureAnchor(id, frame)
         return nil
     end
     local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
-    local anchor = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+    local anchor = {
+        point = point,
+        relativeTo = relativeTo,
+        relativePoint = relativePoint,
+        x = x,
+        y = y,
+        scale = frame:GetScale(),
+    }
     capturedAnchors[id] = anchor
     return anchor
 end
 
---- Re-anchors `frame` to its captured Blizzard anchor plus our offsets, and
---- applies our scale. Idempotent: always derives from the captured base.
+--- Re-anchors `frame`: relative mode keeps it attached to its Blizzard base
+--- anchor (offsets are deltas, so it follows the parent frame), absolute mode
+--- pins it to the screen center coordinates. Scale is a multiplier of the
+--- captured Blizzard scale (focus ToT has a non-unit default scale).
+--- Idempotent: always derives from the captured base.
 ---@param id string
 ---@param frame any
 ---@param settings VersaUIFrameOverrideSettings
@@ -109,18 +123,21 @@ local function ApplyAbsoluteOverride(id, frame, settings)
     if base == nil then
         return
     end
-    local relativeTo = base.relativeTo or frame:GetParent()
-    frame:ClearAllPoints()
-    frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + settings.offsetX, base.y + settings.offsetY)
-    frame:SetScale(settings.scale)
+    if settings.relativeToParent then
+        local relativeTo = base.relativeTo or frame:GetParent()
+        frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + settings.offsetX, base.y + settings.offsetY)
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
+    end
+    frame:SetScale((base.scale or 1) * settings.scale)
 end
 
---- Restores a frame to its captured Blizzard anchor and unit scale.
+--- Restores a frame to its captured Blizzard anchor and scale.
 ---@param id string
 ---@param frame any
 local function ResetToCaptured(id, frame)
     local base = capturedAnchors[id]
-    frame:SetScale(1)
+    frame:SetScale(base and base.scale or 1)
     if base == nil or frame:GetNumPoints() == 0 then
         return
     end
@@ -241,6 +258,28 @@ function Overrides.OnCheckFaction(targetFrame)
     if db ~= nil and db.factionColorDisabled then
         ApplyFactionColor(targetFrame, true)
     end
+end
+
+--- Called from the SetSmallSize post-hook: Blizzard just re-anchored and
+--- re-scaled the focus ToT, so refresh the captured base and re-apply our
+--- delta/multiplier on top of the fresh values.
+---@param focusFrame any
+function Overrides.OnFocusSizeChanged(focusFrame)
+    if db == nil or guard == nil then
+        return
+    end
+    local settings = GetFrameSettings("focusTot")
+    if settings == nil or not settings.enabled then
+        return
+    end
+    local frame = focusFrame and focusFrame.totFrame
+    if frame == nil then
+        return
+    end
+    guard:Run(function()
+        capturedAnchors.focusTot = nil
+        ApplyAbsoluteOverride("focusTot", frame, settings)
+    end)
 end
 
 ---@param bar any
@@ -416,6 +455,11 @@ function Overrides.Init(overridesDB)
     if TargetFrameMixin ~= nil and TargetFrameMixin.CheckFaction ~= nil then
         hooksecurefunc(TargetFrameMixin, "CheckFaction", function(targetFrame)
             Overrides.OnCheckFaction(targetFrame)
+        end)
+    end
+    if FocusFrameMixin ~= nil and FocusFrameMixin.SetSmallSize ~= nil then
+        hooksecurefunc(FocusFrameMixin, "SetSmallSize", function(focusFrame)
+            Overrides.OnFocusSizeChanged(focusFrame)
         end)
     end
     if ActionBarMixin ~= nil and ActionBarMixin.UpdateGridLayout ~= nil then

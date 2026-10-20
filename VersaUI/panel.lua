@@ -8,6 +8,7 @@ VersaUI.panel = Panel
 
 local FRAME_FEATURES = {
     { id = "tot", title = "Target of Target" },
+    { id = "focusTot", title = "Focus ToT" },
     { id = "targetCastBar", title = "Target cast bar" },
     { id = "focusCastBar", title = "Focus cast bar" },
     { id = "petCastBar", title = "Pet cast bar" },
@@ -83,7 +84,7 @@ local function CreateFrameFeatureRow(feature, y)
     end)
 
     local scaleBox = CreateNumberBox(frame, "Scale", 52)
-    scaleBox:SetPoint("TOPLEFT", 226, y - 3)
+    scaleBox:SetPoint("TOPLEFT", 250, y - 3)
     WireNumberBox(scaleBox, function()
         return settings.scale
     end, function(value)
@@ -95,7 +96,7 @@ local function CreateFrameFeatureRow(feature, y)
     end)
 
     local offsetXBox = CreateNumberBox(frame, "X", 52)
-    offsetXBox:SetPoint("TOPLEFT", 292, y - 3)
+    offsetXBox:SetPoint("TOPLEFT", 316, y - 3)
     WireNumberBox(offsetXBox, function()
         return settings.offsetX
     end, function(value)
@@ -107,12 +108,22 @@ local function CreateFrameFeatureRow(feature, y)
     end)
 
     local offsetYBox = CreateNumberBox(frame, "Y", 52)
-    offsetYBox:SetPoint("TOPLEFT", 358, y - 3)
+    offsetYBox:SetPoint("TOPLEFT", 382, y - 3)
     WireNumberBox(offsetYBox, function()
         return settings.offsetY
     end, function(value)
         settings.offsetY =
             VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.offsetMin, VersaUI.config.LIMITS.offsetMax)
+        if settings.enabled then
+            apply(feature.id)
+        end
+    end)
+
+    local relCheck = CreateCheckBox(frame, "")
+    relCheck:SetPoint("TOPLEFT", 448, y)
+    relCheck:SetChecked(settings.relativeToParent ~= false)
+    relCheck:SetScript("OnClick", function(self)
+        settings.relativeToParent = (self:GetChecked() == true)
         if settings.enabled then
             apply(feature.id)
         end
@@ -130,7 +141,7 @@ end
 
 local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(440, 430)
+    frame:SetSize(520, 430)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -147,7 +158,7 @@ local function CreateWindow()
     local db = VersaUI.db.overrides
     local apply = VersaUI.overrides.ApplyFeature
 
-    CreateHeader(frame, "Frame overrides (Scale / X / Y offsets)", -34)
+    CreateHeader(frame, "Frame overrides (Scale / X / Y / Rel-to-parent)", -34)
 
     local y = -68
     for _, feature in ipairs(FRAME_FEATURES) do
@@ -187,7 +198,7 @@ local function CreateWindow()
     end)
 
     local paddingXBox = CreateNumberBox(frame, "Pad X", 52)
-    paddingXBox:SetPoint("TOPLEFT", 226, y - 3)
+    paddingXBox:SetPoint("TOPLEFT", 250, y - 3)
     WireNumberBox(paddingXBox, function()
         return padding.paddingX
     end, function(value)
@@ -199,7 +210,7 @@ local function CreateWindow()
     end)
 
     local paddingYBox = CreateNumberBox(frame, "Pad Y", 52)
-    paddingYBox:SetPoint("TOPLEFT", 292, y - 3)
+    paddingYBox:SetPoint("TOPLEFT", 316, y - 3)
     WireNumberBox(paddingYBox, function()
         return padding.paddingY
     end, function(value)
@@ -212,7 +223,9 @@ local function CreateWindow()
 
     local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 12)
-    notes:SetText("Enter commits a value, Esc reverts. Combat changes queue until it ends.")
+    notes:SetText(
+        "Enter commits, Esc reverts. Rel = follow the parent frame (off = screen position). Combat changes queue."
+    )
 end
 
 --- Builds the window and registers the /versaui toggle. Called once from
