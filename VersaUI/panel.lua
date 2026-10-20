@@ -141,7 +141,7 @@ end
 
 local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(520, 430)
+    frame:SetSize(520, 470)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -223,9 +223,7 @@ local function CreateWindow()
 
     local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 12)
-    notes:SetText(
-        "Enter commits, Esc reverts. Rel = follow the parent frame (off = screen position). Combat changes queue."
-    )
+    notes:SetText("Enter commits, Esc reverts. Rel = follow parent. Combat changes queue.")
 end
 
 --- Builds the window and registers the /versaui toggle. Called once from
