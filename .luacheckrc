@@ -28,6 +28,7 @@ files["VersaUI"] = {
 		"AnchorUtil",
 		"C_EditMode",
 		"C_Timer",
+		"issecretvalue",
 		"EditModeManagerFrame",
 		"EventRegistry",
 		"CreateFrame",

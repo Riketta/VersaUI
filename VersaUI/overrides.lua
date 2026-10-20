@@ -112,8 +112,21 @@ end
 
 -- === Apply helpers ===
 
+--- True when the engine handed us a secret placeholder instead of a real
+--- value. Secure-managed layout state (e.g. a spell bar currently anchored to
+--- its aura container) is returned as secret values to tainted code, and even
+--- comparing one errors - so every layout read must be screened before use.
+---@param value any
+---@return boolean
+local function IsSecret(value)
+    return issecretvalue ~= nil and issecretvalue(value) == true
+end
+
 --- Remembers the Blizzard-set anchor of a frame before we touch it. Anchors
 --- reset at every login/load, so the capture is always the game's own value.
+--- Secret-safe: when the engine hides the layout (see IsSecret), nothing is
+--- stored and a later call retries - only plain, usable numbers ever enter
+--- the cache, so our own SetPoint arguments can never be secret.
 ---@param id string
 ---@param frame any
 ---@return VersaUICapturedAnchor|nil
@@ -121,17 +134,32 @@ local function CaptureAnchor(id, frame)
     if capturedAnchors[id] ~= nil then
         return capturedAnchors[id]
     end
-    if frame == nil or frame:GetNumPoints() == 0 then
+    if frame == nil then
+        return nil
+    end
+    local numPoints = frame:GetNumPoints()
+    if IsSecret(numPoints) or numPoints == 0 then
         return nil
     end
     local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+    local scale = frame:GetScale()
+    if
+        IsSecret(point)
+        or IsSecret(relativePoint)
+        or IsSecret(x)
+        or IsSecret(y)
+        or IsSecret(scale)
+        or IsSecret(relativeTo)
+    then
+        return nil
+    end
     local anchor = {
         point = point,
         relativeTo = relativeTo,
         relativePoint = relativePoint,
         x = x,
         y = y,
-        scale = frame:GetScale(),
+        scale = scale,
     } ---@type VersaUICapturedAnchor
     capturedAnchors[id] = anchor
     return anchor
@@ -168,13 +196,14 @@ local function ApplyAbsoluteOverride(id, frame, settings)
     ApplyElementOverride(id, frame, settings, settings.offsetX, settings.offsetY)
 end
 
---- Restores a frame to its captured Blizzard anchor and scale.
+--- Restores a frame to its captured Blizzard anchor and scale. Reads no live
+--- layout values, so it is safe on secure-managed frames.
 ---@param id string
 ---@param frame any
 local function ResetToCaptured(id, frame)
     local base = capturedAnchors[id]
     frame:SetScale(base and base.scale or 1)
-    if base == nil or frame:GetNumPoints() == 0 then
+    if base == nil then
         return
     end
     local relativeTo = base.relativeTo or frame:GetParent()
@@ -261,35 +290,11 @@ local function ResetLevelPair(id, pair)
     end
 end
 
---- Nudges a spell bar's freshly-set Blizzard anchor by our offsets. Only ever
---- called from the AdjustPosition post-hook, so the current anchor is always
---- the game's own value and the delta is applied exactly once. Absolute mode
---- pins the bar to the screen instead of nudging its unit-frame anchor.
----@param bar any
----@param settings VersaUIFrameOverrideSettings
-local function NudgeSpellBar(bar, settings)
-    if bar == nil then
-        return
-    end
-    if settings.relativeToParent then
-        if bar:GetNumPoints() == 0 then
-            return
-        end
-        local point, relativeTo, relativePoint, x, y = bar:GetPoint(1)
-        local anchorTo = relativeTo or bar:GetParent()
-        bar:SetPoint(point, anchorTo, relativePoint, x + settings.offsetX, y + settings.offsetY)
-    else
-        bar:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
-    end
-    bar:SetScale(settings.scale)
-end
-
---- Applies a spell bar override from its captured Blizzard base. Unlike the
---- post-hook nudge this is idempotent (always derived from the captured base,
---- never from the current anchor), so it is safe to call from the enable path,
---- ApplyAll and event maintenance without knowing whether Blizzard has
---- re-anchored in between. Works even when the AdjustPosition hook is
---- unavailable on a flavor; the hook then only serves as maintenance.
+--- Applies a spell bar override from its captured Blizzard base. Idempotent
+--- (always derived from the captured base, never from live layout reads), so
+--- it is safe to call from the enable path, the AdjustPosition post-hook and
+--- event maintenance without ever double-applying a delta or touching secret
+--- layout values.
 ---@param id string
 ---@param frame any
 ---@param settings VersaUIFrameOverrideSettings
@@ -297,13 +302,18 @@ local function ApplySpellBarOverride(id, frame, settings)
     if frame == nil then
         return
     end
-    if frame:GetNumPoints() == 0 then
+    local numPoints = frame:GetNumPoints()
+    if not IsSecret(numPoints) and numPoints == 0 then
         -- The bar only receives its Blizzard anchor from AdjustPosition; ask
-        -- for a fresh one and suppress the nudge for this single call so the
-        -- capture stays the clean base.
+        -- for a fresh one and suppress the hook for this single call so the
+        -- capture stays the clean base. Runs inside pcall: we call a Blizzard
+        -- method from tainted execution, and its internals may legitimately
+        -- refuse that on some builds. Without an anchor we simply retry later
+        -- (the hook captures on the first real anchor). A secret point count
+        -- means the layout is managed - never force, never branch on it.
         forcedBaseCapture[id] = true
         if frame.AdjustPosition ~= nil then
-            frame:AdjustPosition()
+            pcall(frame.AdjustPosition, frame)
         end
         forcedBaseCapture[id] = nil
     end
@@ -397,8 +407,10 @@ end
 -- === Hook handlers ===
 
 --- Called from the spell bar instance post-hook: Blizzard just re-anchored
---- the bar to its base, so the delta must be applied exactly once. Skipped
---- while we are forcing a base anchor purely for capture.
+--- the bar to its base (or to its aura-container anchor), so re-apply our
+--- override from the captured base. Skipped while we are forcing a base
+--- anchor purely for capture. The captured-base apply is idempotent, so this
+--- can never double-apply a delta no matter how often Blizzard re-anchors.
 ---@param id string
 ---@param bar any
 function Overrides.OnSpellBarAdjusted(id, bar)
@@ -410,7 +422,7 @@ function Overrides.OnSpellBarAdjusted(id, bar)
         return
     end
     guard:Run(function()
-        NudgeSpellBar(bar, settings)
+        ApplyAbsoluteOverride(id, bar, settings)
     end)
 end
 
@@ -637,7 +649,8 @@ end
 
 --- Prints the runtime facts about the spell bars the override engine depends
 --- on, for diagnosing client builds whose behavior drifts from the reference
---- dump. Usage: /versaui debug
+--- dump. Secret-safe: managed layout state is reported as <secret> instead of
+--- erroring. Usage: /versaui debug
 function Overrides.DumpSpellBarDiagnostics()
     for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
         local frame = ResolveFrame(id)
@@ -645,20 +658,27 @@ function Overrides.DumpSpellBarDiagnostics()
             print("|cffa335eeVersaUI:|r " .. id .. ": frame missing")
         else
             local anchor = "none"
-            if frame:GetNumPoints() > 0 then
+            local numPoints = frame:GetNumPoints()
+            if IsSecret(numPoints) then
+                anchor = "<secret>"
+            elseif numPoints > 0 then
                 local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
-                local relativeName = "nil"
-                if relativeTo ~= nil and relativeTo.GetName ~= nil then
-                    relativeName = tostring(relativeTo:GetName() or "<anonymous>")
+                if IsSecret(point) or IsSecret(relativePoint) or IsSecret(x) or IsSecret(y) then
+                    anchor = "<secret>"
+                else
+                    local relativeName = "nil"
+                    if relativeTo ~= nil and relativeTo.GetName ~= nil then
+                        relativeName = tostring(relativeTo:GetName() or "<anonymous>")
+                    end
+                    anchor = string.format(
+                        "%s %s %s (%s, %s)",
+                        tostring(point),
+                        relativeName,
+                        tostring(relativePoint),
+                        tostring(x),
+                        tostring(y)
+                    )
                 end
-                anchor = string.format(
-                    "%s %s %s (%s, %s)",
-                    tostring(point),
-                    relativeName,
-                    tostring(relativePoint),
-                    tostring(x),
-                    tostring(y)
-                )
             end
             print(
                 string.format(
