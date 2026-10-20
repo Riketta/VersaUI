@@ -1,7 +1,8 @@
 -- Override engine: applies VersaUI's own layout/scale/cosmetic overrides on
 -- top of the default UI using legal surfaces only:
 --   * read-only frame APIs and Edit Mode data,
---   * post-hooks (hooksecurefunc) for Blizzard-managed anchors,
+--   * post-hooks on frame instances (never mixin tables) for Blizzard-managed
+--     anchors, with idempotent capture-based applies as the fallback path,
 --   * guarded SetPoint/SetScale out of combat (deferred on PLAYER_REGEN_ENABLED).
 -- Nothing here writes to Blizzard state that Edit Mode persists; all values
 -- live in VersaUI's own SavedVariables.
@@ -33,6 +34,9 @@ Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "targ
 local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
 local capturedAnchors = {} ---@type table<string, VersaUICapturedAnchor>
+--- Set while we ask Blizzard to anchor an unanchored spell bar purely to
+--- capture its base; the AdjustPosition hook must not nudge that call.
+local forcedBaseCapture = {} ---@type table<string, boolean>
 
 -- === Pure helpers (spec-covered) ===
 
@@ -259,17 +263,51 @@ end
 
 --- Nudges a spell bar's freshly-set Blizzard anchor by our offsets. Only ever
 --- called from the AdjustPosition post-hook, so the current anchor is always
---- the game's own value and the delta is applied exactly once.
+--- the game's own value and the delta is applied exactly once. Absolute mode
+--- pins the bar to the screen instead of nudging its unit-frame anchor.
 ---@param bar any
 ---@param settings VersaUIFrameOverrideSettings
 local function NudgeSpellBar(bar, settings)
-    if bar == nil or bar:GetNumPoints() == 0 then
+    if bar == nil then
         return
     end
-    local point, relativeTo, relativePoint, x, y = bar:GetPoint(1)
-    local anchorTo = relativeTo or bar:GetParent()
-    bar:SetPoint(point, anchorTo, relativePoint, x + settings.offsetX, y + settings.offsetY)
+    if settings.relativeToParent then
+        if bar:GetNumPoints() == 0 then
+            return
+        end
+        local point, relativeTo, relativePoint, x, y = bar:GetPoint(1)
+        local anchorTo = relativeTo or bar:GetParent()
+        bar:SetPoint(point, anchorTo, relativePoint, x + settings.offsetX, y + settings.offsetY)
+    else
+        bar:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
+    end
     bar:SetScale(settings.scale)
+end
+
+--- Applies a spell bar override from its captured Blizzard base. Unlike the
+--- post-hook nudge this is idempotent (always derived from the captured base,
+--- never from the current anchor), so it is safe to call from the enable path,
+--- ApplyAll and cast-start maintenance without knowing whether Blizzard has
+--- re-anchored in between. Works even when the AdjustPosition hook is
+--- unavailable on a flavor; the hook then only serves as maintenance.
+---@param id string
+---@param frame any
+---@param settings VersaUIFrameOverrideSettings
+local function ApplySpellBarOverride(id, frame, settings)
+    if frame == nil then
+        return
+    end
+    if frame:GetNumPoints() == 0 then
+        -- The bar only receives its Blizzard anchor from AdjustPosition; ask
+        -- for a fresh one and suppress the nudge for this single call so the
+        -- capture stays the clean base.
+        forcedBaseCapture[id] = true
+        if frame.AdjustPosition ~= nil then
+            frame:AdjustPosition()
+        end
+        forcedBaseCapture[id] = nil
+    end
+    ApplyAbsoluteOverride(id, frame, settings)
 end
 
 local function ApplyPetAuras(enabled)
@@ -339,20 +377,13 @@ end
 
 -- === Hook handlers ===
 
+--- Called from the spell bar instance post-hook: Blizzard just re-anchored
+--- the bar to its base, so the delta must be applied exactly once. Skipped
+--- while we are forcing a base anchor purely for capture.
+---@param id string
 ---@param bar any
-function Overrides.OnSpellBarAdjusted(bar)
-    if db == nil or guard == nil then
-        return
-    end
-    local targetSpellBar = GlobalFrame("TargetFrameSpellBar")
-    local focusSpellBar = GlobalFrame("FocusFrameSpellBar")
-    local id = nil
-    if targetSpellBar ~= nil and bar == targetSpellBar then
-        id = "targetCastBar"
-    elseif focusSpellBar ~= nil and bar == focusSpellBar then
-        id = "focusCastBar"
-    end
-    if id == nil then
+function Overrides.OnSpellBarAdjusted(id, bar)
+    if db == nil or guard == nil or forcedBaseCapture[id] then
         return
     end
     local settings = GetFrameSettings(id)
@@ -372,25 +403,30 @@ function Overrides.OnCheckFaction(targetFrame)
 end
 
 --- Called from the SetSmallSize post-hook: Blizzard just re-anchored and
---- re-scaled the focus ToT, so refresh the captured base and re-apply our
---- delta/multiplier on top of the fresh values.
+--- re-scaled the focus ToT and the focus spell bar, so refresh the captured
+--- bases and re-apply our deltas/multipliers on top of the fresh values.
 ---@param focusFrame any
 function Overrides.OnFocusSizeChanged(focusFrame)
     if db == nil or guard == nil then
         return
     end
-    local settings = GetFrameSettings("focusTot")
-    if settings == nil or not settings.enabled then
-        return
+    local totSettings = GetFrameSettings("focusTot")
+    if totSettings ~= nil and totSettings.enabled then
+        local frame = focusFrame and focusFrame.totFrame
+        if frame ~= nil then
+            guard:Run(function()
+                capturedAnchors.focusTot = nil
+                ApplyAbsoluteOverride("focusTot", frame, totSettings)
+            end)
+        end
     end
-    local frame = focusFrame and focusFrame.totFrame
-    if frame == nil then
-        return
+    local castSettings = GetFrameSettings("focusCastBar")
+    if castSettings ~= nil and castSettings.enabled then
+        guard:Run(function()
+            capturedAnchors.focusCastBar = nil
+            ApplySpellBarOverride("focusCastBar", GlobalFrame("FocusFrameSpellBar"), castSettings)
+        end)
     end
-    guard:Run(function()
-        capturedAnchors.focusTot = nil
-        ApplyAbsoluteOverride("focusTot", frame, settings)
-    end)
 end
 
 ---@param bar any
@@ -434,6 +470,59 @@ function Overrides.ApplyBarPadding(bar, settings)
         layout
     )
     bar:Layout()
+end
+
+-- === Hook registration ===
+
+-- Frames we already post-hooked, keyed [frame][method]. Keeps the registration
+-- idempotent across the Init and PLAYER_LOGIN passes; double hooks would apply
+-- our deltas twice.
+local hookedFrames = {} ---@type table<any, table<string, boolean>>
+
+--- Post-hooks one frame method. This must target the frame instance, never the
+--- shared mixin table: XML mixin methods are copied onto every frame when it is
+--- created (the same key/value copy SecureMixin does in
+--- Blizzard_SharedXMLBase/Mixin.lua), so the frames Blizzard already made keep
+--- calling their own copy and never see a replaced table entry.
+---@param frame any
+---@param methodName string
+---@param handler fun(...)
+local function HookFrameMethod(frame, methodName, handler)
+    if frame == nil or frame[methodName] == nil then
+        return
+    end
+    local hooked = hookedFrames[frame]
+    if hooked == nil then
+        hooked = {}
+        hookedFrames[frame] = hooked
+    end
+    if hooked[methodName] then
+        return
+    end
+    hooked[methodName] = true
+    hooksecurefunc(frame, methodName, handler)
+end
+
+--- Wires every post-hook onto the live frame instances. Safe to call repeatedly
+--- (e.g. again on PLAYER_LOGIN for frames that may appear after Init).
+local function HookBlizzardFrames()
+    HookFrameMethod(GlobalFrame("TargetFrameSpellBar"), "AdjustPosition", function(bar)
+        Overrides.OnSpellBarAdjusted("targetCastBar", bar)
+    end)
+    HookFrameMethod(GlobalFrame("FocusFrameSpellBar"), "AdjustPosition", function(bar)
+        Overrides.OnSpellBarAdjusted("focusCastBar", bar)
+    end)
+    HookFrameMethod(FocusFrame, "SetSmallSize", function(focusFrame)
+        Overrides.OnFocusSizeChanged(focusFrame)
+    end)
+    HookFrameMethod(MultiBarBottomRight, "UpdateGridLayout", function(bar)
+        Overrides.OnUpdateGridLayout(bar)
+    end)
+    for _, frame in ipairs(GetFactionColorFrames()) do
+        HookFrameMethod(frame, "CheckFaction", function(targetFrame)
+            Overrides.OnCheckFaction(targetFrame)
+        end)
+    end
 end
 
 -- === Public API ===
@@ -492,29 +581,16 @@ function Overrides.ApplyFeature(id)
     end
 
     if settings.enabled then
-        if id == "targetCastBar" or id == "focusCastBar" then
-            -- Ask Blizzard to anchor freshly; the post-hook then nudges once.
-            guard:Run(function()
-                frame:SetScale(settings.scale)
-                if frame.AdjustPosition ~= nil then
-                    frame:AdjustPosition()
-                end
-            end)
-        else
-            guard:Run(function()
-                ApplyAbsoluteOverride(id, frame, settings)
-            end)
-        end
-    else
         guard:Run(function()
             if id == "targetCastBar" or id == "focusCastBar" then
-                frame:SetScale(1)
-                if frame.AdjustPosition ~= nil then
-                    frame:AdjustPosition()
-                end
+                ApplySpellBarOverride(id, frame, settings)
             else
-                ResetToCaptured(id, frame)
+                ApplyAbsoluteOverride(id, frame, settings)
             end
+        end)
+    else
+        guard:Run(function()
+            ResetToCaptured(id, frame)
         end)
     end
 end
@@ -556,11 +632,30 @@ function Overrides.Init(overridesDB)
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("UNIT_FACTION")
-    eventFrame:SetScript("OnEvent", function(_, event)
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+    eventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_LOGIN" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
+            HookBlizzardFrames()
             Overrides.ApplyAll()
         elseif event == "PLAYER_REGEN_ENABLED" then
             guard:FlushPending()
+        elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+            if unit == "target" or unit == "focus" then
+                -- Blizzard may re-anchor the bar when the cast starts; re-apply
+                -- one tick later so the override survives casts even on flavors
+                -- where the AdjustPosition hook is unavailable.
+                C_Timer.After(0, function()
+                    guard:Run(function()
+                        for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
+                            local settings = GetFrameSettings(id)
+                            if settings ~= nil and settings.enabled then
+                                ApplySpellBarOverride(id, ResolveFrame(id), settings)
+                            end
+                        end
+                    end)
+                end)
+            end
         elseif event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_FOCUS_CHANGED" or event == "UNIT_FACTION" then
             -- Not every flavor recolors through CheckFaction, so re-whiten on
             -- the unit-change events themselves.
@@ -570,30 +665,7 @@ function Overrides.Init(overridesDB)
         end
     end)
 
-    -- Flavor safety: guard the hook target itself, not just the mixin table -
-    -- hooksecurefunc errors when the method is missing (e.g. CheckFaction does
-    -- not exist on the camelot classic client), which would abort Init and
-    -- silently kill every hook registered after it.
-    if TargetSpellBarMixin ~= nil and TargetSpellBarMixin.AdjustPosition ~= nil then
-        hooksecurefunc(TargetSpellBarMixin, "AdjustPosition", function(bar)
-            Overrides.OnSpellBarAdjusted(bar)
-        end)
-    end
-    if TargetFrameMixin ~= nil and TargetFrameMixin.CheckFaction ~= nil then
-        hooksecurefunc(TargetFrameMixin, "CheckFaction", function(targetFrame)
-            Overrides.OnCheckFaction(targetFrame)
-        end)
-    end
-    if FocusFrameMixin ~= nil and FocusFrameMixin.SetSmallSize ~= nil then
-        hooksecurefunc(FocusFrameMixin, "SetSmallSize", function(focusFrame)
-            Overrides.OnFocusSizeChanged(focusFrame)
-        end)
-    end
-    if ActionBarMixin ~= nil and ActionBarMixin.UpdateGridLayout ~= nil then
-        hooksecurefunc(ActionBarMixin, "UpdateGridLayout", function(bar)
-            Overrides.OnUpdateGridLayout(bar)
-        end)
-    end
+    HookBlizzardFrames()
 end
 
 return Overrides

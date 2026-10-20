@@ -33,6 +33,8 @@ Addon code is tainted, and taint spreads along the execution path: when tainted 
 
 - Avoid using protected and secure functions that will taint the UI.
 - Never overwrite or replace Blizzard global functions and variables. Extend behavior with post-hooks via `hooksecurefunc` instead.
+- Post-hook frame **instances**, never shared mixin tables. XML `mixin=` copies every key/value onto the frame at creation (same copy loop as `SecureMixin` in `Blizzard_SharedXMLBase/Mixin.lua`), so frames Blizzard already made keep calling their own copy of the method — replacing `SomeMixin.Method` never fires for them. Hook `TargetFrame.spellbar`, `MultiBarBottomRight`, etc. directly; an addon can also load after the frames exist, so retry instance hooks on `PLAYER_LOGIN` and keep the registration idempotent.
+- Guard hook targets on method existence, not just table identity: `hooksecurefunc` errors when the method is missing and aborts the whole init (e.g. `CheckFaction` does not exist on the camelot classic client).
 - Do not call protected functions (e.g. `UseAction`, `TargetUnit`, `FocusUnit`, `SpellStopCasting`, `PickupInventoryItem`) from addon code.
 - Do not show, hide, move, or reparent protected frames (e.g. `PlayerFrame`, `TargetFrame`, action buttons) while the player is in combat.
 - Implement click-driven casting and item usage with `SecureActionButtonTemplate` and attributes (e.g. `SetAttribute("type", "spell")`) instead of calling protected functions from script handlers. Many protected functions (`UseAction`, targeting, movement, camera) additionally require real hardware events (mouse click, key press) — the secure button template exists to satisfy this.
