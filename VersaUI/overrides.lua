@@ -350,15 +350,23 @@ function Overrides.Init(overridesDB)
         end
     end)
 
-    hooksecurefunc(TargetSpellBarMixin, "AdjustPosition", function(bar)
-        Overrides.OnSpellBarAdjusted(bar)
-    end)
-    hooksecurefunc(TargetFrameMixin, "CheckFaction", function(targetFrame)
-        Overrides.OnCheckFaction(targetFrame)
-    end)
-    hooksecurefunc(ActionBarMixin, "UpdateGridLayout", function(bar)
-        Overrides.OnUpdateGridLayout(bar)
-    end)
+    -- Flavor safety: camelot-classic shares most of this surface, but guard
+    -- each mixin so a missing one degrades a feature instead of erroring load.
+    if TargetSpellBarMixin ~= nil then
+        hooksecurefunc(TargetSpellBarMixin, "AdjustPosition", function(bar)
+            Overrides.OnSpellBarAdjusted(bar)
+        end)
+    end
+    if TargetFrameMixin ~= nil then
+        hooksecurefunc(TargetFrameMixin, "CheckFaction", function(targetFrame)
+            Overrides.OnCheckFaction(targetFrame)
+        end)
+    end
+    if ActionBarMixin ~= nil then
+        hooksecurefunc(ActionBarMixin, "UpdateGridLayout", function(bar)
+            Overrides.OnUpdateGridLayout(bar)
+        end)
+    end
 end
 
 return Overrides

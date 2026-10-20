@@ -7,6 +7,8 @@ VersaUI is a World of Warcraft addon that modifies the default game UI with mino
 ## References
 
 - Use the original Blizzard interface code as a reference: `D:\Dev External\BlizzardInterfaceCode`.
+  The dump is from the **wow_classic_beta** client (Camelot flavor, 1.60.1 → TOC `16001`), so source
+  verification describes that flavor; retail (`120100`) is close but not identical.
 - Use the AuctiMogger addon (`D:\Dev\WoW Goop\AuctiMogger`) as the reference for project structure, architecture, and misc tooling (CI, formatting, type-safety, etc.).
 
 ## Coding rules

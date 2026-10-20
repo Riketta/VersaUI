@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 16001, 120100
 ## Title: VersaUI
 ## Notes: Minor default-UI modifications.
 ## Author: Riketta
