@@ -22,8 +22,9 @@ describe("padding anchor resolution", function()
     end)
 end)
 
-describe("level text pairing", function()
-    local circle = {}
+describe("level pair anchoring", function()
+    local circle, text, icon = {}, {}, {}
+    local pair = { circle = circle, text = text, highLevelTexture = icon } ---@type VersaUILevelPair
 
     ---@param relativeTo any|nil
     ---@return VersaUICapturedAnchor
@@ -31,16 +32,20 @@ describe("level text pairing", function()
         return { point = "CENTER", relativeTo = relativeTo, relativePoint = "CENTER", x = 0, y = 0, scale = 1 }
     end
 
-    it("follows the circle when the text is anchored to it (camelot)", function()
-        assert.is_true(Overrides.LevelTextFollowsCircle(MakeAnchor(circle), circle))
+    it("follows the pair when anchored to the circle (camelot text and icon)", function()
+        assert.is_true(Overrides.LevelElementFollowsPair(MakeAnchor(circle), pair))
     end)
 
-    it("does not follow when the text is anchored elsewhere (retail)", function()
-        assert.is_false(Overrides.LevelTextFollowsCircle(MakeAnchor({}), circle))
-        assert.is_false(Overrides.LevelTextFollowsCircle(MakeAnchor(nil), circle))
+    it("follows the pair when anchored to the text (retail icon)", function()
+        assert.is_true(Overrides.LevelElementFollowsPair(MakeAnchor(text), pair))
     end)
 
-    it("does not follow without a captured anchor", function()
-        assert.is_false(Overrides.LevelTextFollowsCircle(nil, circle))
+    it("carries the offset when anchored outside the pair", function()
+        assert.is_false(Overrides.LevelElementFollowsPair(MakeAnchor({}), pair))
+        assert.is_false(Overrides.LevelElementFollowsPair(MakeAnchor(nil), pair))
+    end)
+
+    it("carries the offset without a captured anchor", function()
+        assert.is_false(Overrides.LevelElementFollowsPair(nil, pair))
     end)
 end)

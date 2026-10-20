@@ -22,11 +22,13 @@ Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "targ
 ---@field y number
 ---@field scale number|nil
 
---- The two regions making up a unit frame's level display. Blizzard renders
---- them as one visual unit, so VersaUI treats them as a pair.
+--- The three regions making up a unit frame's level display: the background
+--- circle, the level number and the high-level icon shown instead of it.
+--- Blizzard renders them as one visual unit, so VersaUI treats them as a pair.
 ---@class VersaUILevelPair
 ---@field circle any|nil
 ---@field text any|nil
+---@field highLevelTexture any|nil
 
 local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
@@ -176,9 +178,10 @@ local function ResetToCaptured(id, frame)
     frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x, base.y)
 end
 
---- Resolves the level display pair of a unit frame (background circle + level
---- text). Both live under TargetFrameContentMain on every flavor that has
---- them; missing elements are simply nil so the apply helpers can skip them.
+--- Resolves the level display pair of a unit frame: background circle, level
+--- number and high-level icon. The circle and text live under
+--- TargetFrameContentMain, the icon under TargetFrameContentContextual;
+--- missing elements are simply nil so the apply helpers can skip them.
 ---@param id string "targetLevel" or "focusLevel"
 ---@return VersaUILevelPair|nil
 local function ResolveLevelPair(id)
@@ -196,40 +199,48 @@ local function ResolveLevelPair(id)
     if contentMain == nil then
         return nil
     end
-    return { circle = contentMain.LevelBackgroundCircle, text = contentMain.LevelText }
+    local contentContextual = content and content.TargetFrameContentContextual
+    return {
+        circle = contentMain.LevelBackgroundCircle,
+        text = contentMain.LevelText,
+        highLevelTexture = contentContextual and contentContextual.HighLevelTexture or nil,
+    }
 end
 
---- Pure: whether the level text is anchored to the circle itself (camelot
---- centers it on the circle in TargetFrameMixin:OnLoad) and therefore already
---- follows every circle move. Retail anchors the text next to the name bar
---- instead, so there it needs its own offset.
+--- Pure: whether a pair element is anchored to another member of its own pair
+--- and therefore already tracks that member's position. Exactly one member
+--- anchors outside the pair and carries our offset; on camelot that is the
+--- circle (TargetFrameMixin:OnLoad centers text and icon on it), on retail the
+--- text anchors beside the name bar and the icon hangs off the text.
 ---@param base VersaUICapturedAnchor|nil
----@param circle any
+---@param pair VersaUILevelPair
 ---@return boolean
-function Overrides.LevelTextFollowsCircle(base, circle)
-    return base ~= nil and base.relativeTo == circle
+function Overrides.LevelElementFollowsPair(base, pair)
+    if base == nil then
+        return false
+    end
+    return base.relativeTo == pair.circle or base.relativeTo == pair.text or base.relativeTo == pair.highLevelTexture
 end
 
---- Applies the override to one level pair. The circle always carries the
---- offset; the text only adds its own when it is not anchored to the circle,
---- otherwise the delta would apply twice (once per element).
+--- Applies the override to one level pair. The single carrier (see
+--- LevelElementFollowsPair) receives anchor and scale; the followers are
+--- never re-pointed - they ride along with the carrier in both relative and
+--- absolute mode - and only get the scale multiplier.
 ---@param id string
 ---@param pair VersaUILevelPair
 ---@param settings VersaUIFrameOverrideSettings
 local function ApplyLevelPair(id, pair, settings)
-    local suffixes = { "circle", "text" }
+    local suffixes = { "circle", "text", "highLevelTexture" }
     for _, suffix in ipairs(suffixes) do
         local element = pair[suffix]
         if element ~= nil then
             local captureId = id .. "." .. suffix
-            local offsetX, offsetY = settings.offsetX, settings.offsetY
-            if suffix == "text" then
-                local base = CaptureAnchor(captureId, element)
-                if Overrides.LevelTextFollowsCircle(base, pair.circle) then
-                    offsetX, offsetY = 0, 0
-                end
+            local base = CaptureAnchor(captureId, element)
+            if Overrides.LevelElementFollowsPair(base, pair) then
+                element:SetScale((base and base.scale or 1) * settings.scale)
+            else
+                ApplyElementOverride(captureId, element, settings, settings.offsetX, settings.offsetY)
             end
-            ApplyElementOverride(captureId, element, settings, offsetX, offsetY)
         end
     end
 end
@@ -238,7 +249,7 @@ end
 ---@param id string
 ---@param pair VersaUILevelPair
 local function ResetLevelPair(id, pair)
-    for _, suffix in ipairs({ "circle", "text" }) do
+    for _, suffix in ipairs({ "circle", "text", "highLevelTexture" }) do
         local element = pair[suffix]
         if element ~= nil then
             ResetToCaptured(id .. "." .. suffix, element)
