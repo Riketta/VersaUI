@@ -287,7 +287,7 @@ end
 --- Applies a spell bar override from its captured Blizzard base. Unlike the
 --- post-hook nudge this is idempotent (always derived from the captured base,
 --- never from the current anchor), so it is safe to call from the enable path,
---- ApplyAll and cast-start maintenance without knowing whether Blizzard has
+--- ApplyAll and event maintenance without knowing whether Blizzard has
 --- re-anchored in between. Works even when the AdjustPosition hook is
 --- unavailable on a flavor; the hook then only serves as maintenance.
 ---@param id string
@@ -308,6 +308,25 @@ local function ApplySpellBarOverride(id, frame, settings)
         forcedBaseCapture[id] = nil
     end
     ApplyAbsoluteOverride(id, frame, settings)
+end
+
+--- Re-applies both spell bars one tick later. Blizzard can re-anchor them on
+--- many paths (target changes, aura container updates, casts); the tick makes
+--- sure we run after Blizzard's own handler in the same event burst.
+local function ReapplySpellBarsNextTick()
+    if guard == nil then
+        return
+    end
+    C_Timer.After(0, function()
+        guard:Run(function()
+            for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
+                local settings = GetFrameSettings(id)
+                if settings ~= nil and settings.enabled then
+                    ApplySpellBarOverride(id, ResolveFrame(id), settings)
+                end
+            end
+        end)
+    end)
 end
 
 local function ApplyPetAuras(enabled)
@@ -616,6 +635,46 @@ function Overrides.ApplyAll()
     end
 end
 
+--- Prints the runtime facts about the spell bars the override engine depends
+--- on, for diagnosing client builds whose behavior drifts from the reference
+--- dump. Usage: /versaui debug
+function Overrides.DumpSpellBarDiagnostics()
+    for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
+        local frame = ResolveFrame(id)
+        if frame == nil then
+            print("|cffa335eeVersaUI:|r " .. id .. ": frame missing")
+        else
+            local anchor = "none"
+            if frame:GetNumPoints() > 0 then
+                local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+                local relativeName = "nil"
+                if relativeTo ~= nil and relativeTo.GetName ~= nil then
+                    relativeName = tostring(relativeTo:GetName() or "<anonymous>")
+                end
+                anchor = string.format(
+                    "%s %s %s (%s, %s)",
+                    tostring(point),
+                    relativeName,
+                    tostring(relativePoint),
+                    tostring(x),
+                    tostring(y)
+                )
+            end
+            print(
+                string.format(
+                    "|cffa335eeVersaUI:|r %s name=%s AdjustPosition=%s hooked=%s scale=%s anchor: %s",
+                    id,
+                    tostring(frame:GetName()),
+                    type(frame.AdjustPosition),
+                    tostring(hookedFrames[frame] ~= nil and hookedFrames[frame].AdjustPosition == true),
+                    string.format("%.2f", frame:GetScale() or 0),
+                    anchor
+                )
+            )
+        end
+    end
+end
+
 --- Wires events and post-hooks. Called once from bootstrap on ADDON_LOADED.
 ---@param overridesDB VersaUIOverridesConfig
 function Overrides.Init(overridesDB)
@@ -634,6 +693,8 @@ function Overrides.Init(overridesDB)
     eventFrame:RegisterEvent("UNIT_FACTION")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+    eventFrame:RegisterUnitEvent("UNIT_AURA", "target", "focus")
+    eventFrame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", "target", "focus")
     eventFrame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_LOGIN" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
             HookBlizzardFrames()
@@ -642,23 +703,21 @@ function Overrides.Init(overridesDB)
             guard:FlushPending()
         elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
             if unit == "target" or unit == "focus" then
-                -- Blizzard may re-anchor the bar when the cast starts; re-apply
-                -- one tick later so the override survives casts even on flavors
-                -- where the AdjustPosition hook is unavailable.
-                C_Timer.After(0, function()
-                    guard:Run(function()
-                        for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
-                            local settings = GetFrameSettings(id)
-                            if settings ~= nil and settings.enabled then
-                                ApplySpellBarOverride(id, ResolveFrame(id), settings)
-                            end
-                        end
-                    end)
-                end)
+                ReapplySpellBarsNextTick()
             end
-        elseif event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_FOCUS_CHANGED" or event == "UNIT_FACTION" then
+        elseif event == "UNIT_AURA" or event == "UNIT_CLASSIFICATION_CHANGED" then
+            -- Aura container and classification switches re-anchor the bar.
+            if unit == "target" or unit == "focus" then
+                ReapplySpellBarsNextTick()
+            end
+        elseif event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_FOCUS_CHANGED" then
+            ReapplySpellBarsNextTick()
             -- Not every flavor recolors through CheckFaction, so re-whiten on
             -- the unit-change events themselves.
+            if db ~= nil and db.factionColorDisabled then
+                ApplyFactionColorToAll(true)
+            end
+        elseif event == "UNIT_FACTION" then
             if db ~= nil and db.factionColorDisabled then
                 ApplyFactionColorToAll(true)
             end

@@ -239,7 +239,11 @@ function Panel.Init()
     CreateWindow()
 
     SLASH_VERSAUI1 = "/versaui"
-    SlashCmdList["VERSAUI"] = function()
+    SlashCmdList["VERSAUI"] = function(msg)
+        if msg == "debug" then
+            VersaUI.overrides.DumpSpellBarDiagnostics()
+            return
+        end
         if frame:IsShown() then
             frame:Hide()
         else
