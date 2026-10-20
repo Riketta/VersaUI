@@ -11,6 +11,8 @@ local FRAME_FEATURES = {
     { id = "focusTot", title = "Focus ToT" },
     { id = "targetCastBar", title = "Target cast bar" },
     { id = "focusCastBar", title = "Focus cast bar" },
+    { id = "targetLevel", title = "Target level" },
+    { id = "focusLevel", title = "Focus level" },
     { id = "petCastBar", title = "Pet cast bar" },
 }
 

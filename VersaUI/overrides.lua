@@ -10,11 +10,27 @@ local VersaUI = VersaUI or {}
 local Overrides = {}
 VersaUI.overrides = Overrides
 
-Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "petCastBar" }
+Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "targetLevel", "focusLevel", "petCastBar" }
+
+--- One captured Blizzard anchor/scale pair, used as the base for deltas and
+--- scale multipliers.
+---@class VersaUICapturedAnchor
+---@field point string
+---@field relativeTo any|nil
+---@field relativePoint string
+---@field x number
+---@field y number
+---@field scale number|nil
+
+--- The two regions making up a unit frame's level display. Blizzard renders
+--- them as one visual unit, so VersaUI treats them as a pair.
+---@class VersaUILevelPair
+---@field circle any|nil
+---@field text any|nil
 
 local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
-local capturedAnchors = {}
+local capturedAnchors = {} ---@type table<string, VersaUICapturedAnchor>
 
 -- === Pure helpers (spec-covered) ===
 
@@ -78,6 +94,10 @@ local function GetFrameSettings(id)
         return db.targetCastBar
     elseif id == "focusCastBar" then
         return db.focusCastBar
+    elseif id == "targetLevel" then
+        return db.targetLevel
+    elseif id == "focusLevel" then
+        return db.focusLevel
     elseif id == "petCastBar" then
         return db.petCastBar
     end
@@ -90,6 +110,7 @@ end
 --- reset at every login/load, so the capture is always the game's own value.
 ---@param id string
 ---@param frame any
+---@return VersaUICapturedAnchor|nil
 local function CaptureAnchor(id, frame)
     if capturedAnchors[id] ~= nil then
         return capturedAnchors[id]
@@ -105,31 +126,40 @@ local function CaptureAnchor(id, frame)
         x = x,
         y = y,
         scale = frame:GetScale(),
-    }
+    } ---@type VersaUICapturedAnchor
     capturedAnchors[id] = anchor
     return anchor
 end
 
---- Re-anchors `frame`: relative mode keeps it attached to its Blizzard base
---- anchor (offsets are deltas, so it follows the parent frame), absolute mode
---- pins it to the screen center coordinates. Scale is a multiplier of the
+--- Re-anchors one element: relative mode keeps it attached to its Blizzard
+--- base anchor (offsets are deltas, so it follows the parent frame), absolute
+--- mode pins it to the screen center coordinates. Scale is a multiplier of the
 --- captured Blizzard scale (focus ToT has a non-unit default scale).
 --- Idempotent: always derives from the captured base.
----@param id string
+---@param captureId string unique key for the captured base anchor
 ---@param frame any
 ---@param settings VersaUIFrameOverrideSettings
-local function ApplyAbsoluteOverride(id, frame, settings)
-    local base = CaptureAnchor(id, frame)
+---@param offsetX number
+---@param offsetY number
+local function ApplyElementOverride(captureId, frame, settings, offsetX, offsetY)
+    local base = CaptureAnchor(captureId, frame)
     if base == nil then
         return
     end
     if settings.relativeToParent then
         local relativeTo = base.relativeTo or frame:GetParent()
-        frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + settings.offsetX, base.y + settings.offsetY)
+        frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + offsetX, base.y + offsetY)
     else
-        frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
+        frame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
     end
     frame:SetScale((base.scale or 1) * settings.scale)
+end
+
+---@param id string
+---@param frame any
+---@param settings VersaUIFrameOverrideSettings
+local function ApplyAbsoluteOverride(id, frame, settings)
+    ApplyElementOverride(id, frame, settings, settings.offsetX, settings.offsetY)
 end
 
 --- Restores a frame to its captured Blizzard anchor and scale.
@@ -144,6 +174,76 @@ local function ResetToCaptured(id, frame)
     local relativeTo = base.relativeTo or frame:GetParent()
     frame:ClearAllPoints()
     frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x, base.y)
+end
+
+--- Resolves the level display pair of a unit frame (background circle + level
+--- text). Both live under TargetFrameContentMain on every flavor that has
+--- them; missing elements are simply nil so the apply helpers can skip them.
+---@param id string "targetLevel" or "focusLevel"
+---@return VersaUILevelPair|nil
+local function ResolveLevelPair(id)
+    local frame = nil ---@type any|nil
+    if id == "targetLevel" then
+        frame = TargetFrame
+    elseif id == "focusLevel" then
+        frame = FocusFrame
+    end
+    if frame == nil then
+        return nil
+    end
+    local content = frame.TargetFrameContent
+    local contentMain = content and content.TargetFrameContentMain
+    if contentMain == nil then
+        return nil
+    end
+    return { circle = contentMain.LevelBackgroundCircle, text = contentMain.LevelText }
+end
+
+--- Pure: whether the level text is anchored to the circle itself (camelot
+--- centers it on the circle in TargetFrameMixin:OnLoad) and therefore already
+--- follows every circle move. Retail anchors the text next to the name bar
+--- instead, so there it needs its own offset.
+---@param base VersaUICapturedAnchor|nil
+---@param circle any
+---@return boolean
+function Overrides.LevelTextFollowsCircle(base, circle)
+    return base ~= nil and base.relativeTo == circle
+end
+
+--- Applies the override to one level pair. The circle always carries the
+--- offset; the text only adds its own when it is not anchored to the circle,
+--- otherwise the delta would apply twice (once per element).
+---@param id string
+---@param pair VersaUILevelPair
+---@param settings VersaUIFrameOverrideSettings
+local function ApplyLevelPair(id, pair, settings)
+    local suffixes = { "circle", "text" }
+    for _, suffix in ipairs(suffixes) do
+        local element = pair[suffix]
+        if element ~= nil then
+            local captureId = id .. "." .. suffix
+            local offsetX, offsetY = settings.offsetX, settings.offsetY
+            if suffix == "text" then
+                local base = CaptureAnchor(captureId, element)
+                if Overrides.LevelTextFollowsCircle(base, pair.circle) then
+                    offsetX, offsetY = 0, 0
+                end
+            end
+            ApplyElementOverride(captureId, element, settings, offsetX, offsetY)
+        end
+    end
+end
+
+--- Restores a level pair to its captured Blizzard anchors and scales.
+---@param id string
+---@param pair VersaUILevelPair
+local function ResetLevelPair(id, pair)
+    for _, suffix in ipairs({ "circle", "text" }) do
+        local element = pair[suffix]
+        if element ~= nil then
+            ResetToCaptured(id .. "." .. suffix, element)
+        end
+    end
 end
 
 --- Nudges a spell bar's freshly-set Blizzard anchor by our offsets. Only ever
@@ -355,12 +455,28 @@ function Overrides.ApplyFeature(id)
         return
     end
 
-    local frame = ResolveFrame(id)
-    if frame == nil then
-        return
-    end
     local settings = GetFrameSettings(id)
     if settings == nil then
+        return
+    end
+
+    if id == "targetLevel" or id == "focusLevel" then
+        local pair = ResolveLevelPair(id)
+        if pair == nil then
+            return
+        end
+        guard:Run(function()
+            if settings.enabled then
+                ApplyLevelPair(id, pair, settings)
+            else
+                ResetLevelPair(id, pair)
+            end
+        end)
+        return
+    end
+
+    local frame = ResolveFrame(id)
+    if frame == nil then
         return
     end
 

@@ -21,3 +21,26 @@ describe("padding anchor resolution", function()
         assert.equals(Overrides.ResolvePaddingAnchor({}), "TOPRIGHT")
     end)
 end)
+
+describe("level text pairing", function()
+    local circle = {}
+
+    ---@param relativeTo any|nil
+    ---@return VersaUICapturedAnchor
+    local function MakeAnchor(relativeTo)
+        return { point = "CENTER", relativeTo = relativeTo, relativePoint = "CENTER", x = 0, y = 0, scale = 1 }
+    end
+
+    it("follows the circle when the text is anchored to it (camelot)", function()
+        assert.is_true(Overrides.LevelTextFollowsCircle(MakeAnchor(circle), circle))
+    end)
+
+    it("does not follow when the text is anchored elsewhere (retail)", function()
+        assert.is_false(Overrides.LevelTextFollowsCircle(MakeAnchor({}), circle))
+        assert.is_false(Overrides.LevelTextFollowsCircle(MakeAnchor(nil), circle))
+    end)
+
+    it("does not follow without a captured anchor", function()
+        assert.is_false(Overrides.LevelTextFollowsCircle(nil, circle))
+    end)
+end)

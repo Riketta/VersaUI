@@ -32,6 +32,8 @@ Config.LIMITS = {
 ---@field focusTot VersaUIFrameOverrideSettings
 ---@field targetCastBar VersaUIFrameOverrideSettings
 ---@field focusCastBar VersaUIFrameOverrideSettings
+---@field targetLevel VersaUIFrameOverrideSettings
+---@field focusLevel VersaUIFrameOverrideSettings
 ---@field petCastBar VersaUIFrameOverrideSettings
 ---@field petAurasOnTop boolean
 ---@field factionColorDisabled boolean
@@ -49,6 +51,8 @@ function Config.GetDefaults()
         focusTot = DefaultFrameOverride(),
         targetCastBar = DefaultFrameOverride(),
         focusCastBar = DefaultFrameOverride(),
+        targetLevel = DefaultFrameOverride(),
+        focusLevel = DefaultFrameOverride(),
         petCastBar = DefaultFrameOverride(),
         petAurasOnTop = false,
         factionColorDisabled = false,
@@ -125,6 +129,12 @@ function Config.Normalize(db)
     if db.focusCastBar == nil then
         db.focusCastBar = DefaultFrameOverride()
     end
+    if db.targetLevel == nil then
+        db.targetLevel = DefaultFrameOverride()
+    end
+    if db.focusLevel == nil then
+        db.focusLevel = DefaultFrameOverride()
+    end
     if db.petCastBar == nil then
         db.petCastBar = DefaultFrameOverride()
     end
@@ -145,6 +155,8 @@ function Config.Normalize(db)
     Config.NormalizeFrameOverride(db.focusTot)
     Config.NormalizeFrameOverride(db.targetCastBar)
     Config.NormalizeFrameOverride(db.focusCastBar)
+    Config.NormalizeFrameOverride(db.targetLevel)
+    Config.NormalizeFrameOverride(db.focusLevel)
     Config.NormalizeFrameOverride(db.petCastBar)
     db.petAurasOnTop = (db.petAurasOnTop == true)
     db.factionColorDisabled = (db.factionColorDisabled == true)
