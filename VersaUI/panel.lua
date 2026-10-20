@@ -130,7 +130,7 @@ end
 
 local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(440, 330)
+    frame:SetSize(440, 430)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -147,16 +147,16 @@ local function CreateWindow()
     local db = VersaUI.db.overrides
     local apply = VersaUI.overrides.ApplyFeature
 
-    CreateHeader(frame, "Frame overrides (Scale / X / Y offsets)", -30)
+    CreateHeader(frame, "Frame overrides (Scale / X / Y offsets)", -34)
 
-    local y = -62
+    local y = -68
     for _, feature in ipairs(FRAME_FEATURES) do
         CreateFrameFeatureRow(feature, y)
-        y = y - 34
+        y = y - 36
     end
 
-    CreateHeader(frame, "Toggles", y - 6)
-    y = y - 34
+    CreateHeader(frame, "Toggles", y - 8)
+    y = y - 42
 
     local petAuras = CreateToggleRow("Pet buffs on top of pet frame", y)
     petAuras:SetChecked(db.petAurasOnTop == true)
@@ -164,7 +164,7 @@ local function CreateWindow()
         db.petAurasOnTop = (self:GetChecked() == true)
         apply("petAurasOnTop")
     end)
-    y = y - 28
+    y = y - 30
 
     local factionColor = CreateToggleRow("Disable target faction color", y)
     factionColor:SetChecked(db.factionColorDisabled == true)
@@ -172,10 +172,10 @@ local function CreateWindow()
         db.factionColorDisabled = (self:GetChecked() == true)
         apply("factionColorDisabled")
     end)
-    y = y - 40
+    y = y - 44
 
     CreateHeader(frame, "MultiBarBottomRight padding", y)
-    y = y - 28
+    y = y - 34
 
     local padding = db.barPadding
     local paddingCheck = CreateCheckBox(frame, "Split padding")
@@ -211,7 +211,7 @@ local function CreateWindow()
     end)
 
     local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 14)
+    notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 12)
     notes:SetText("Enter commits a value, Esc reverts. Combat changes queue until it ends.")
 end
 
