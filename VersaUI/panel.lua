@@ -1,0 +1,232 @@
+-- Overrides window: our own non-protected frame. Every control writes to the
+-- SavedVariables config (via VersaUI.config) and asks the override engine to
+-- re-apply. No Blizzard UI is modified, so this window carries no taint risk.
+
+local VersaUI = VersaUI or {}
+local Panel = {}
+VersaUI.panel = Panel
+
+local FRAME_FEATURES = {
+    { id = "tot", title = "Target of Target" },
+    { id = "targetCastBar", title = "Target cast bar" },
+    { id = "focusCastBar", title = "Focus cast bar" },
+    { id = "petCastBar", title = "Pet cast bar" },
+}
+
+local frame = nil ---@type any|nil
+
+---@param parent any
+---@param title string
+---@param width number
+---@return any
+local function CreateNumberBox(parent, title, width)
+    local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    box:SetSize(width, 24)
+    box:SetAutoFocus(false)
+    box:SetMaxLetters(7)
+    local label = box:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("BOTTOMLEFT", box, "TOPLEFT", 2, -2)
+    label:SetText(title)
+    return box
+end
+
+--- Wires an editbox to a getter/commit pair: Enter commits (validated and
+--- clamped by the caller), Escape reverts the display.
+---@param box any
+---@param get fun(): number
+---@param commit fun(value: number)
+local function WireNumberBox(box, get, commit)
+    box:SetText(tostring(get()))
+    box:SetScript("OnEnterPressed", function(editBox)
+        local value = VersaUI.config.ParseNumber(editBox:GetText(), get())
+        commit(value)
+        editBox:SetText(tostring(get()))
+        editBox:ClearFocus()
+    end)
+    box:SetScript("OnEscapePressed", function(editBox)
+        editBox:SetText(tostring(get()))
+        editBox:ClearFocus()
+    end)
+end
+
+---@param parent any
+---@param title string
+---@return any
+local function CreateCheckBox(parent, title)
+    local checkBox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    checkBox.Text:SetText(title)
+    return checkBox
+end
+
+---@param parent any
+---@param text string
+---@param y number
+local function CreateHeader(parent, text, y)
+    local header = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    header:SetPoint("TOPLEFT", parent, "TOPLEFT", 18, y)
+    header:SetText(text)
+end
+
+---@param feature {id: string, title: string}
+---@param y number
+local function CreateFrameFeatureRow(feature, y)
+    local db = VersaUI.db.overrides
+    local settings = db[feature.id]
+    local apply = VersaUI.overrides.ApplyFeature
+
+    local checkBox = CreateCheckBox(frame, feature.title)
+    checkBox:SetPoint("TOPLEFT", 16, y)
+    checkBox:SetChecked(settings.enabled == true)
+    checkBox:SetScript("OnClick", function(self)
+        settings.enabled = (self:GetChecked() == true)
+        apply(feature.id)
+    end)
+
+    local scaleBox = CreateNumberBox(frame, "Scale", 52)
+    scaleBox:SetPoint("TOPLEFT", 226, y - 3)
+    WireNumberBox(scaleBox, function()
+        return settings.scale
+    end, function(value)
+        settings.scale =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.scaleMin, VersaUI.config.LIMITS.scaleMax)
+        if settings.enabled then
+            apply(feature.id)
+        end
+    end)
+
+    local offsetXBox = CreateNumberBox(frame, "X", 52)
+    offsetXBox:SetPoint("TOPLEFT", 292, y - 3)
+    WireNumberBox(offsetXBox, function()
+        return settings.offsetX
+    end, function(value)
+        settings.offsetX =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.offsetMin, VersaUI.config.LIMITS.offsetMax)
+        if settings.enabled then
+            apply(feature.id)
+        end
+    end)
+
+    local offsetYBox = CreateNumberBox(frame, "Y", 52)
+    offsetYBox:SetPoint("TOPLEFT", 358, y - 3)
+    WireNumberBox(offsetYBox, function()
+        return settings.offsetY
+    end, function(value)
+        settings.offsetY =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.offsetMin, VersaUI.config.LIMITS.offsetMax)
+        if settings.enabled then
+            apply(feature.id)
+        end
+    end)
+end
+
+---@param title string
+---@param y number
+---@return any checkBox
+local function CreateToggleRow(title, y)
+    local checkBox = CreateCheckBox(frame, title)
+    checkBox:SetPoint("TOPLEFT", 16, y)
+    return checkBox
+end
+
+local function CreateWindow()
+    frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
+    frame:SetSize(440, 330)
+    frame:SetPoint("CENTER")
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", frame.StartMoving)
+    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    frame:SetTitle("VersaUI Overrides")
+    tinsert(UISpecialFrames, "VersaUIOverridesPanel")
+
+    local db = VersaUI.db.overrides
+    local apply = VersaUI.overrides.ApplyFeature
+
+    CreateHeader(frame, "Frame overrides (Scale / X / Y offsets)", -30)
+
+    local y = -62
+    for _, feature in ipairs(FRAME_FEATURES) do
+        CreateFrameFeatureRow(feature, y)
+        y = y - 34
+    end
+
+    CreateHeader(frame, "Toggles", y - 6)
+    y = y - 34
+
+    local petAuras = CreateToggleRow("Pet buffs on top of pet frame", y)
+    petAuras:SetChecked(db.petAurasOnTop == true)
+    petAuras:SetScript("OnClick", function(self)
+        db.petAurasOnTop = (self:GetChecked() == true)
+        apply("petAurasOnTop")
+    end)
+    y = y - 28
+
+    local factionColor = CreateToggleRow("Disable target faction color", y)
+    factionColor:SetChecked(db.factionColorDisabled == true)
+    factionColor:SetScript("OnClick", function(self)
+        db.factionColorDisabled = (self:GetChecked() == true)
+        apply("factionColorDisabled")
+    end)
+    y = y - 40
+
+    CreateHeader(frame, "MultiBarBottomRight padding", y)
+    y = y - 28
+
+    local padding = db.barPadding
+    local paddingCheck = CreateCheckBox(frame, "Split padding")
+    paddingCheck:SetPoint("TOPLEFT", 16, y)
+    paddingCheck:SetChecked(padding.enabled == true)
+    paddingCheck:SetScript("OnClick", function(self)
+        padding.enabled = (self:GetChecked() == true)
+        apply("barPadding")
+    end)
+
+    local paddingXBox = CreateNumberBox(frame, "Pad X", 52)
+    paddingXBox:SetPoint("TOPLEFT", 226, y - 3)
+    WireNumberBox(paddingXBox, function()
+        return padding.paddingX
+    end, function(value)
+        padding.paddingX =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.paddingMin, VersaUI.config.LIMITS.paddingMax)
+        if padding.enabled then
+            apply("barPadding")
+        end
+    end)
+
+    local paddingYBox = CreateNumberBox(frame, "Pad Y", 52)
+    paddingYBox:SetPoint("TOPLEFT", 292, y - 3)
+    WireNumberBox(paddingYBox, function()
+        return padding.paddingY
+    end, function(value)
+        padding.paddingY =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.paddingMin, VersaUI.config.LIMITS.paddingMax)
+        if padding.enabled then
+            apply("barPadding")
+        end
+    end)
+
+    local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 14)
+    notes:SetText("Enter commits a value, Esc reverts. Combat changes queue until it ends.")
+end
+
+--- Builds the window and registers the /versaui toggle. Called once from
+--- bootstrap after the DB is normalized.
+function Panel.Init()
+    if frame ~= nil then
+        return
+    end
+    CreateWindow()
+
+    SLASH_VERSAUI1 = "/versaui"
+    SlashCmdList["VERSAUI"] = function()
+        if frame:IsShown() then
+            frame:Hide()
+        else
+            frame:Show()
+        end
+    end
+end
+
+return Panel

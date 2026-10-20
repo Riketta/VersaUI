@@ -3,5 +3,13 @@
 ## Notes: Minor default-UI modifications.
 ## Author: Riketta
 ## Version: 0.1.0
+## SavedVariables: VersaUIDB
 
 VersaUI.lua
+config.lua
+guard.lua
+overrides.lua
+panel.lua
+
+# Composition root (must be last)
+bootstrap.lua

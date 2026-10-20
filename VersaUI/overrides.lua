@@ -1,0 +1,364 @@
+-- Override engine: applies VersaUI's own layout/scale/cosmetic overrides on
+-- top of the default UI using legal surfaces only:
+--   * read-only frame APIs and Edit Mode data,
+--   * post-hooks (hooksecurefunc) for Blizzard-managed anchors,
+--   * guarded SetPoint/SetScale out of combat (deferred on PLAYER_REGEN_ENABLED).
+-- Nothing here writes to Blizzard state that Edit Mode persists; all values
+-- live in VersaUI's own SavedVariables.
+
+local VersaUI = VersaUI or {}
+local Overrides = {}
+VersaUI.overrides = Overrides
+
+Overrides.FEATURES = { "tot", "targetCastBar", "focusCastBar", "petCastBar" }
+
+local db = nil ---@type VersaUIOverridesConfig|nil
+local guard = nil ---@type VersaUIGuard|nil
+local capturedAnchors = {}
+
+-- === Pure helpers (spec-covered) ===
+
+--- Anchor point for a re-applied action bar grid, mirroring Blizzard's rule
+--- (ActionBar.lua:UpdateGridLayout).
+---@param state {addButtonsToLeft: boolean|nil, addButtonsToTop: boolean|nil, addButtonsToRight: boolean|nil}
+---@return string
+function Overrides.ResolvePaddingAnchor(state)
+    if state.addButtonsToLeft then
+        return "LEFT"
+    elseif state.addButtonsToTop then
+        if state.addButtonsToRight then
+            return "BOTTOMLEFT"
+        end
+        return "BOTTOMRIGHT"
+    end
+    if state.addButtonsToRight then
+        return "TOPLEFT"
+    end
+    return "TOPRIGHT"
+end
+
+-- === Frame resolution ===
+
+--- Frames the game creates by name at runtime (unit frames, spell bars) are
+--- not declared globals; this keeps the strict type gate clean.
+---@param name string
+---@return any
+local function GlobalFrame(name)
+    return _G[name]
+end
+
+---@param id string
+---@return any frame, any ownerFrame
+local function ResolveFrame(id)
+    if id == "tot" then
+        return GlobalFrame("TargetFrameToT"), TargetFrame
+    elseif id == "targetCastBar" then
+        return GlobalFrame("TargetFrameSpellBar"), TargetFrame
+    elseif id == "focusCastBar" then
+        return GlobalFrame("FocusFrameSpellBar"), FocusFrame
+    elseif id == "petCastBar" then
+        return GlobalFrame("PetCastingBarFrame"), UIParent
+    end
+    return nil, nil
+end
+
+---@param id string
+---@return VersaUIFrameOverrideSettings|nil
+local function GetFrameSettings(id)
+    if db == nil then
+        return nil
+    end
+    if id == "tot" then
+        return db.tot
+    elseif id == "targetCastBar" then
+        return db.targetCastBar
+    elseif id == "focusCastBar" then
+        return db.focusCastBar
+    elseif id == "petCastBar" then
+        return db.petCastBar
+    end
+    return nil
+end
+
+-- === Apply helpers ===
+
+--- Remembers the Blizzard-set anchor of a frame before we touch it. Anchors
+--- reset at every login/load, so the capture is always the game's own value.
+---@param id string
+---@param frame any
+local function CaptureAnchor(id, frame)
+    if capturedAnchors[id] ~= nil then
+        return capturedAnchors[id]
+    end
+    if frame == nil or frame:GetNumPoints() == 0 then
+        return nil
+    end
+    local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+    local anchor = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+    capturedAnchors[id] = anchor
+    return anchor
+end
+
+--- Re-anchors `frame` to its captured Blizzard anchor plus our offsets, and
+--- applies our scale. Idempotent: always derives from the captured base.
+---@param id string
+---@param frame any
+---@param settings VersaUIFrameOverrideSettings
+local function ApplyAbsoluteOverride(id, frame, settings)
+    local base = CaptureAnchor(id, frame)
+    if base == nil then
+        return
+    end
+    local relativeTo = base.relativeTo or frame:GetParent()
+    frame:ClearAllPoints()
+    frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + settings.offsetX, base.y + settings.offsetY)
+    frame:SetScale(settings.scale)
+end
+
+--- Restores a frame to its captured Blizzard anchor and unit scale.
+---@param id string
+---@param frame any
+local function ResetToCaptured(id, frame)
+    local base = capturedAnchors[id]
+    frame:SetScale(1)
+    if base == nil or frame:GetNumPoints() == 0 then
+        return
+    end
+    local relativeTo = base.relativeTo or frame:GetParent()
+    frame:ClearAllPoints()
+    frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x, base.y)
+end
+
+--- Nudges a spell bar's freshly-set Blizzard anchor by our offsets. Only ever
+--- called from the AdjustPosition post-hook, so the current anchor is always
+--- the game's own value and the delta is applied exactly once.
+---@param bar any
+---@param settings VersaUIFrameOverrideSettings
+local function NudgeSpellBar(bar, settings)
+    if bar == nil or bar:GetNumPoints() == 0 then
+        return
+    end
+    local point, relativeTo, relativePoint, x, y = bar:GetPoint(1)
+    local anchorTo = relativeTo or bar:GetParent()
+    bar:SetPoint(point, anchorTo, relativePoint, x + settings.offsetX, y + settings.offsetY)
+    bar:SetScale(settings.scale)
+end
+
+local function ApplyPetAuras(enabled)
+    if PetFrame == nil or PetFrame.AuraFrameContainer == nil then
+        return
+    end
+    if enabled then
+        PetFrame.AuraFrameContainer:SetPoint("BOTTOMLEFT", PetFrame, "TOPLEFT", 48, 4)
+    else
+        PetFrame.AuraFrameContainer:SetPoint("TOPLEFT", PetFrame, "TOPLEFT", 48, -42)
+    end
+end
+
+---@param targetFrame any
+---@param disabled boolean
+local function ApplyFactionColor(targetFrame, disabled)
+    local content = targetFrame and targetFrame.TargetFrameContent
+    local contentMain = content and content.TargetFrameContentMain
+    if contentMain and contentMain.ReputationColor then
+        if disabled then
+            contentMain.ReputationColor:SetVertexColor(1, 1, 1, 1)
+        else
+            contentMain.ReputationColor:SetVertexColor(UnitSelectionColor(targetFrame.unit))
+        end
+    end
+end
+
+-- === Hook handlers ===
+
+---@param bar any
+function Overrides.OnSpellBarAdjusted(bar)
+    if db == nil or guard == nil then
+        return
+    end
+    local targetSpellBar = GlobalFrame("TargetFrameSpellBar")
+    local focusSpellBar = GlobalFrame("FocusFrameSpellBar")
+    local id = nil
+    if targetSpellBar ~= nil and bar == targetSpellBar then
+        id = "targetCastBar"
+    elseif focusSpellBar ~= nil and bar == focusSpellBar then
+        id = "focusCastBar"
+    end
+    if id == nil then
+        return
+    end
+    local settings = GetFrameSettings(id)
+    if settings == nil or not settings.enabled then
+        return
+    end
+    guard:Run(function()
+        NudgeSpellBar(bar, settings)
+    end)
+end
+
+---@param targetFrame any
+function Overrides.OnCheckFaction(targetFrame)
+    if db ~= nil and db.factionColorDisabled then
+        ApplyFactionColor(targetFrame, true)
+    end
+end
+
+---@param bar any
+function Overrides.OnUpdateGridLayout(bar)
+    if db == nil or not db.barPadding.enabled then
+        return
+    end
+    if MultiBarBottomRight == nil or bar ~= MultiBarBottomRight then
+        return
+    end
+    Overrides.ApplyBarPadding(bar, db.barPadding)
+end
+
+--- Re-applies a bar's grid with separate horizontal/vertical padding, using
+--- the same public layout utilities Blizzard uses. Containers are plain
+--- frames (the secure buttons inside are never re-pointed), so this is safe
+--- in and out of combat.
+---@param bar any
+---@param settings VersaUIPaddingOverrideSettings
+function Overrides.ApplyBarPadding(bar, settings)
+    if bar == nil or bar.shownButtonContainers == nil or not bar.numRows or bar.numRows < 1 then
+        return
+    end
+    local minPadding = bar.minButtonPadding or 2
+    local paddingX = math.max(settings.paddingX, minPadding)
+    local paddingY = math.max(settings.paddingY, minPadding)
+    local count = #bar.shownButtonContainers
+    local stride = math.ceil(count / bar.numRows)
+    local xMultiplier = bar.addButtonsToRight and 1 or -1
+    local yMultiplier = bar.addButtonsToTop and 1 or -1
+    local layout
+    if bar.isHorizontal then
+        layout = GridLayoutUtil.CreateStandardGridLayout(stride, paddingX, paddingY, xMultiplier, yMultiplier)
+    else
+        layout = GridLayoutUtil.CreateVerticalGridLayout(stride, paddingX, paddingY, xMultiplier, yMultiplier)
+    end
+    local anchorPoint = Overrides.ResolvePaddingAnchor(bar)
+    GridLayoutUtil.ApplyGridLayout(
+        bar.shownButtonContainers,
+        AnchorUtil.CreateAnchor(anchorPoint, bar, anchorPoint),
+        layout
+    )
+    bar:Layout()
+end
+
+-- === Public API ===
+
+---@param id string one of Overrides.FEATURES, "petAurasOnTop" or "barPadding"
+function Overrides.ApplyFeature(id)
+    if db == nil or guard == nil then
+        return
+    end
+
+    if id == "petAurasOnTop" then
+        local enabled = (db.petAurasOnTop == true)
+        guard:Run(function()
+            ApplyPetAuras(enabled)
+        end)
+        return
+    end
+
+    if id == "barPadding" then
+        if db.barPadding.enabled then
+            Overrides.ApplyBarPadding(MultiBarBottomRight, db.barPadding)
+        else
+            MultiBarBottomRight:UpdateGridLayout()
+        end
+        return
+    end
+
+    local frame = ResolveFrame(id)
+    if frame == nil then
+        return
+    end
+    local settings = GetFrameSettings(id)
+    if settings == nil then
+        return
+    end
+
+    if settings.enabled then
+        if id == "targetCastBar" or id == "focusCastBar" then
+            -- Ask Blizzard to anchor freshly; the post-hook then nudges once.
+            guard:Run(function()
+                frame:SetScale(settings.scale)
+                if frame.AdjustPosition ~= nil then
+                    frame:AdjustPosition()
+                end
+            end)
+        else
+            guard:Run(function()
+                ApplyAbsoluteOverride(id, frame, settings)
+            end)
+        end
+    else
+        guard:Run(function()
+            if id == "targetCastBar" or id == "focusCastBar" then
+                frame:SetScale(1)
+                if frame.AdjustPosition ~= nil then
+                    frame:AdjustPosition()
+                end
+            else
+                ResetToCaptured(id, frame)
+            end
+        end)
+    end
+end
+
+function Overrides.ApplyAll()
+    if db == nil then
+        return
+    end
+    for _, id in ipairs(Overrides.FEATURES) do
+        local settings = GetFrameSettings(id)
+        if settings ~= nil and settings.enabled then
+            Overrides.ApplyFeature(id)
+        end
+    end
+    if db.petAurasOnTop then
+        Overrides.ApplyFeature("petAurasOnTop")
+    end
+    if db.factionColorDisabled and TargetFrame ~= nil then
+        ApplyFactionColor(TargetFrame, true)
+    end
+    if db.barPadding.enabled then
+        Overrides.ApplyFeature("barPadding")
+    end
+end
+
+--- Wires events and post-hooks. Called once from bootstrap on ADDON_LOADED.
+---@param overridesDB VersaUIOverridesConfig
+function Overrides.Init(overridesDB)
+    db = overridesDB
+    local Guard = VersaUI.guard
+    guard = Guard.New(function()
+        return InCombatLockdown()
+    end)
+
+    local eventFrame = CreateFrame("Frame", "VersaUIOverridesEventFrame", UIParent)
+    eventFrame:RegisterEvent("PLAYER_LOGIN")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
+    eventFrame:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_LOGIN" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
+            Overrides.ApplyAll()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            guard:FlushPending()
+        end
+    end)
+
+    hooksecurefunc(TargetSpellBarMixin, "AdjustPosition", function(bar)
+        Overrides.OnSpellBarAdjusted(bar)
+    end)
+    hooksecurefunc(TargetFrameMixin, "CheckFaction", function(targetFrame)
+        Overrides.OnCheckFaction(targetFrame)
+    end)
+    hooksecurefunc(ActionBarMixin, "UpdateGridLayout", function(bar)
+        Overrides.OnUpdateGridLayout(bar)
+    end)
+end
+
+return Overrides
