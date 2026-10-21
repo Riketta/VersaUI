@@ -9,11 +9,33 @@ VersaUI is a World of Warcraft addon that modifies the default game UI with mino
 - Use the original Blizzard interface code as a reference: `D:\Dev External\BlizzardInterfaceCode`.
   The dump is from the **wow_classic_beta** client (Camelot flavor, 1.60.1 → TOC `16001`), so source
   verification describes that flavor; retail (`120100`) is close but not identical.
+- Some addons carry per-flavor subfolders (`Blizzard_UnitFrame/Camelot/` vs `.../Mainline/`); on the
+  camelot client the `Camelot/` variants override the `Mainline/` ones (element keys differ too, e.g.
+  `PvpBackgroundIcon` vs `PvpIcon`). Verify against `Camelot/` first, keep runtime resolution nil-guarded.
 - Use the AuctiMogger addon (`D:\Dev\WoW Goop\AuctiMogger`) as the reference for project structure, architecture, and misc tooling (CI, formatting, type-safety, etc.).
 
 ## Coding rules
 
 - Everything must be type-safe. No missing types, no vague `table` types, etc. Use very strict typing with a structs/classes approach.
+
+## Architecture
+
+- TOC order: `config.lua` (pure defaults/parsing/clamping, no game APIs — specs cover it all), `guard.lua`
+  (combat deferral), `overrides.lua` (override engine), `panel.lua` (`/versaui` window), `bootstrap.lua`
+  (composition root, must be last). Specs live at repo-root `spec/`.
+- Overrides are capture-based: Blizzard's anchors/scales are captured once (`capturedAnchors`) and every
+  apply re-points from the cache, never from live reads (secret values, double-apply drift). Spell bars are
+  kept overridden by a `SetPoint` post-hook per bar instance — every Blizzard re-anchor ends in SetPoint, so
+  re-asserting in the same execution removes the base-position flash (`suppressSetPointHook` guards our own
+  applies, `forcedBaseCapture` the base capture).
+- Frame writes go through `RunFrameWrite`: `IsProtected()` is checked per write — unprotected frames apply
+  live in combat, protected ones defer via the guard to `PLAYER_REGEN_ENABLED`. Blizzard re-anchors are
+  chased by re-asserting on unit events (`PLAYER_TARGET_CHANGED`, `UNIT_AURA`, cast events) via
+  `C_Timer.After(0)`.
+- Non-frame features (toggles, CVar tweaks) dispatch through `Overrides.ApplyFeature(id)` like frame
+  features; the panel is data-driven rows and its height derives from the row count.
+- `BasicFrameTemplateWithInset` has no `SetTitle` — use `frame.TitleText:SetText()`.
+- Diagnostics: `/versaui debug` prints secret-safe spell bar facts.
 
 ## Tooling & CI
 
@@ -26,6 +48,8 @@ The toolchain mirrors AuctiMogger's, with pinned versions (StyLua 2.6.0, luachec
 - Module pattern: modules register into the `VersaUI` global namespace and return their table, so specs can `require("VersaUI.x")` from the repo root.
 - Any new game global/API usage must be added to the `.luacheckrc` and `.luarc.json` allowlists.
 - `## Interface:` in `VersaUI/VersaUI.toc` must match the target client build.
+- In-game validation: `/console scriptErrors 1` while exercising every touched feature in and out of
+  combat; taint errors surface delayed and silently otherwise.
 
 ## Taint safety suggestions
 
@@ -35,14 +59,21 @@ Addon code is tainted, and taint spreads along the execution path: when tainted 
 - Never overwrite or replace Blizzard global functions and variables. Extend behavior with post-hooks via `hooksecurefunc` instead.
 - Post-hook frame **instances**, never shared mixin tables. XML `mixin=` copies every key/value onto the frame at creation (same copy loop as `SecureMixin` in `Blizzard_SharedXMLBase/Mixin.lua`), so frames Blizzard already made keep calling their own copy of the method — replacing `SomeMixin.Method` never fires for them. Hook `TargetFrame.spellbar`, `MultiBarBottomRight`, etc. directly; an addon can also load after the frames exist, so retry instance hooks on `PLAYER_LOGIN` and keep the registration idempotent.
 - Guard hook targets on method existence, not just table identity: `hooksecurefunc` errors when the method is missing and aborts the whole init (e.g. `CheckFaction` does not exist on the camelot classic client).
+- Hide Blizzard-managed textures with `SetAlpha(0)`, never `Hide()`: Blizzard re-shows them on its own update paths (e.g. `UnitFrameUtil.UpdateUnitPvPIndicator` `SetShown` on the PvP badge), and alpha keeps `IsShown()` true so Blizzard's visibility-dependent logic stays correct (combo-point layout, PvP update sound). Blizzard never writes alpha on these textures (faction tint, PvP badge), so the hide survives. Cosmetic writes (`SetAlpha`/`SetVertexColor`) are safe in combat.
 - Secure-managed layout state comes back as **secret placeholder values** to tainted readers (`GetNumPoints`/`GetPoint` on a spell bar anchored by the aura container), and even comparing one errors (`attempt to compare a secret number value`). Screen every layout read with `issecretvalue`, cache only plain captured numbers, and re-derive positions from the cache instead of re-reading live anchors.
 - Protection does not propagate the way one assumes: `FocusFrameSpellBar` reports `IsProtected() == false` even though its parent is a secure unit button. Check `frame:IsProtected()` per write instead of assuming, so unprotected frames can follow overrides live while protected ones defer to combat end.
+- Write protection and read restriction are independent axes, and either can be more permissive than the other on the same frame: `FocusFrameSpellBar` both returns secret values from `GetPoint`/`GetNumPoints` (aura-container-managed anchors) and accepts tainted re-points live, even mid-combat (`IsProtected() == false`). Secret reads mean "screen with `issecretvalue`, cache plain numbers" — never "defer the writes": routing such frames through the combat guard over-defers them and reintroduces the base-position flash. The converse holds too: a write that works says nothing about the safety of reads.
 - Do not call protected functions (e.g. `UseAction`, `TargetUnit`, `FocusUnit`, `SpellStopCasting`, `PickupInventoryItem`) from addon code.
 - Do not show, hide, move, or reparent protected frames (e.g. `PlayerFrame`, `TargetFrame`, action buttons) while the player is in combat.
 - Implement click-driven casting and item usage with `SecureActionButtonTemplate` and attributes (e.g. `SetAttribute("type", "spell")`) instead of calling protected functions from script handlers. Many protected functions (`UseAction`, targeting, movement, camera) additionally require real hardware events (mouse click, key press) — the secure button template exists to satisfy this.
 - Guard any operation that touches protected frames or settings with `InCombatLockdown()`, and defer protected work until the `PLAYER_REGEN_ENABLED` event.
 - Regular frame methods on addon-owned frames (`SetPoint`, `SetScale`, `SetAlpha`, `RegisterEvent`, etc.) are safe; the hazards concern Blizzard globals, protected frames, and Blizzard-shared state.
 - Do not mutate Blizzard tables in place; prefer composition or post-hooks.
+- Settings slider ranges are UI-side, not CVar bounds: the Mouse Look Speed slider is a proxy writing
+  `cameraYawMoveSpeed`/`cameraPitchMoveSpeed` with a hard-coded `Settings.CreateSliderOptions(90, 270, 10)`
+  (`Blizzard_SettingsDefinitions_Frame/Controls.lua`), while the CVars take any degrees/sec value. `SetCVar`
+  is taint-legal and combat-safe, so below-minimum values are legal — but they persist to Config.wtf, so
+  capture the originals into SavedVariables on first apply to keep restore-on-disable correct across reloads.
 - Diagnose taint with `issecurevariable()` and enable taint logging with `console taintLog 1` (writes to `taintLog.txt`).
 
 ## Edit Mode integration rules
