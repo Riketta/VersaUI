@@ -35,8 +35,12 @@ local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
 local capturedAnchors = {} ---@type table<string, VersaUICapturedAnchor>
 --- Set while we ask Blizzard to anchor an unanchored spell bar purely to
---- capture its base; the AdjustPosition hook must not nudge that call.
+--- capture its base; the SetPoint hook must not re-apply on that call.
 local forcedBaseCapture = {} ---@type table<string, boolean>
+--- Set while we ourselves re-point a spell bar; our own SetPoint would
+--- otherwise re-trigger the SetPoint post-hook. Plain set/clear is enough:
+--- the guarded region is two engine calls with clean, cached arguments.
+local suppressSetPointHook = false ---@type boolean
 
 -- === Pure helpers (spec-covered) ===
 
@@ -319,9 +323,9 @@ end
 
 --- Applies a spell bar override from its captured Blizzard base. Idempotent
 --- (always derived from the captured base, never from live layout reads), so
---- it is safe to call from the enable path, the AdjustPosition post-hook and
---- event maintenance without ever double-applying a delta or touching secret
---- layout values.
+--- it is safe to call from the enable path, the SetPoint post-hook and event
+--- maintenance without ever double-applying a delta or touching secret
+--- layout values. Our own SetPoint is shielded from the post-hook.
 ---@param id string
 ---@param frame any
 ---@param settings VersaUIFrameOverrideSettings
@@ -344,7 +348,9 @@ local function ApplySpellBarOverride(id, frame, settings)
         end
         forcedBaseCapture[id] = nil
     end
+    suppressSetPointHook = true
     ApplyAbsoluteOverride(id, frame, settings)
+    suppressSetPointHook = false
 end
 
 --- Runs `fn` immediately when `frame` accepts layout writes in the current
@@ -455,26 +461,6 @@ end
 
 -- === Hook handlers ===
 
---- Called from the spell bar instance post-hook: Blizzard just re-anchored
---- the bar to its base (or to its aura-container anchor), so re-apply our
---- override from the captured base. Skipped while we are forcing a base
---- anchor purely for capture. The captured-base apply is idempotent, so this
---- can never double-apply a delta no matter how often Blizzard re-anchors.
----@param id string
----@param bar any
-function Overrides.OnSpellBarAdjusted(id, bar)
-    if db == nil or guard == nil or forcedBaseCapture[id] then
-        return
-    end
-    local settings = GetFrameSettings(id)
-    if settings == nil or not settings.enabled then
-        return
-    end
-    RunFrameWrite(bar, function()
-        ApplyAbsoluteOverride(id, bar, settings)
-    end)
-end
-
 ---@param targetFrame any
 function Overrides.OnCheckFaction(targetFrame)
     if db ~= nil and db.factionColorDisabled then
@@ -583,15 +569,33 @@ local function HookFrameMethod(frame, methodName, handler)
     hooksecurefunc(frame, methodName, handler)
 end
 
+--- Post-hooks a spell bar's SetPoint: every Blizzard re-anchor ends in one -
+--- from the cast-start path, the aura container's managed layout, target
+--- switches, whichever internal route - so re-asserting here keeps the
+--- override in the same execution and no base-position frame can be painted.
+--- Our own applies run with suppressSetPointHook set and never re-enter.
+---@param id string
+---@param bar any
+local function HookSpellBarSetPoint(id, bar)
+    HookFrameMethod(bar, "SetPoint", function(hookedBar)
+        if suppressSetPointHook or forcedBaseCapture[id] or db == nil or guard == nil then
+            return
+        end
+        local settings = GetFrameSettings(id)
+        if settings == nil or not settings.enabled then
+            return
+        end
+        RunFrameWrite(hookedBar, function()
+            ApplySpellBarOverride(id, hookedBar, settings)
+        end)
+    end)
+end
+
 --- Wires every post-hook onto the live frame instances. Safe to call repeatedly
 --- (e.g. again on PLAYER_LOGIN for frames that may appear after Init).
 local function HookBlizzardFrames()
-    HookFrameMethod(GlobalFrame("TargetFrameSpellBar"), "AdjustPosition", function(bar)
-        Overrides.OnSpellBarAdjusted("targetCastBar", bar)
-    end)
-    HookFrameMethod(GlobalFrame("FocusFrameSpellBar"), "AdjustPosition", function(bar)
-        Overrides.OnSpellBarAdjusted("focusCastBar", bar)
-    end)
+    HookSpellBarSetPoint("targetCastBar", GlobalFrame("TargetFrameSpellBar"))
+    HookSpellBarSetPoint("focusCastBar", GlobalFrame("FocusFrameSpellBar"))
     HookFrameMethod(FocusFrame, "SetSmallSize", function(focusFrame)
         Overrides.OnFocusSizeChanged(focusFrame)
     end)
