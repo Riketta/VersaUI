@@ -514,6 +514,32 @@ local function ApplyPvpIconToAll(hidden)
     end
 end
 
+--- The focus frame's entire aura display: one secure AuraContainer
+--- (TargetFrameContentContextual.Auras, same slot as the target frame's) that
+--- pools the buff and debuff group buttons, so alpha on the container covers
+--- buffs, debuffs and the aura-count text in a single write. Nil-guarded for
+--- flavors without the container.
+---@return any|nil
+local function GetFocusAuraContainer()
+    local content = FocusFrame and FocusFrame.TargetFrameContent
+    local contextual = content and content.TargetFrameContentContextual
+    return contextual and contextual.Auras or nil
+end
+
+--- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard drives
+--- the container's own visibility (ConfigureAuraContainer calls Show/Hide on
+--- target changes) and the pooled aura buttons via Show/Hide, but never
+--- writes the container's alpha - so SetAlpha(0) hides every aura without
+--- fighting those update paths (Hide() would be re-shown by
+--- ConfigureAuraContainer on the next UpdateAuras).
+---@param hidden boolean
+local function ApplyFocusAurasToAll(hidden)
+    local container = GetFocusAuraContainer()
+    if container ~= nil then
+        container:SetAlpha(hidden and 0 or 1)
+    end
+end
+
 -- === Unit-frame bar textures (health/mana replacement) ===
 
 local LSM_MEDIA_TYPE = "statusbar"
@@ -998,7 +1024,7 @@ end
 
 -- === Public API ===
 
----@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed", "hidePvpIcon" or "barTexture"
+---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed", "hidePvpIcon", "hideFocusAuras" or "barTexture"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -1028,6 +1054,11 @@ function Overrides.ApplyFeature(id)
 
     if id == "hidePvpIcon" then
         ApplyPvpIconToAll(db.hidePvpIcon == true)
+        return
+    end
+
+    if id == "hideFocusAuras" then
+        ApplyFocusAurasToAll(db.hideFocusAuras == true)
         return
     end
 
@@ -1113,6 +1144,9 @@ function Overrides.ApplyAll()
     end
     if db.hidePvpIcon then
         ApplyPvpIconToAll(true)
+    end
+    if db.hideFocusAuras then
+        ApplyFocusAurasToAll(true)
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")
@@ -1219,6 +1253,9 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.hidePvpIcon then
                 ApplyPvpIconToAll(true)
             end
+            if db ~= nil and db.hideFocusAuras then
+                ApplyFocusAurasToAll(true)
+            end
             if db ~= nil and db.barTexture.enabled then
                 ApplyBarTextureToAll()
             end
@@ -1229,8 +1266,8 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.hidePvpIcon then
                 ApplyPvpIconToAll(true)
             end
-            if db ~= nil and db.barTexture.enabled then
-                ApplyBarTextureToAll()
+            if db ~= nil and db.hideFocusAuras then
+                ApplyFocusAurasToAll(true)
             end
         elseif event == "UNIT_DISPLAYPOWER" then
             if db ~= nil and db.barTexture.enabled and (unit == "player" or unit == "target" or unit == "focus") then

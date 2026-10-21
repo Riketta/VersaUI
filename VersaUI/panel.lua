@@ -158,7 +158,7 @@ local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 560 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 590 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -210,6 +210,14 @@ local function CreateWindow()
     hidePvpIcon:SetScript("OnClick", function(self)
         db.hidePvpIcon = (self:GetChecked() == true)
         apply("hidePvpIcon")
+    end)
+    y = y - 30
+
+    local hideFocusAuras = CreateToggleRow("Hide focus auras (buffs and debuffs)", y)
+    hideFocusAuras:SetChecked(db.hideFocusAuras == true)
+    hideFocusAuras:SetScript("OnClick", function(self)
+        db.hideFocusAuras = (self:GetChecked() == true)
+        apply("hideFocusAuras")
     end)
     y = y - 44
 
