@@ -42,6 +42,14 @@ Config.LIMITS = {
 ---@field originalYaw number|nil
 ---@field originalPitch number|nil
 
+--- Unit-frame bar texture replacement (health/mana on player, target, focus).
+--- Blizzard bakes the gradient coloring into the bar atlas (health bars get no
+--- runtime tint at all), so replacing the texture also means replicating the
+--- color: UnitSelectionColor for health, PowerBarColor for mana.
+---@class VersaUIBarTextureSettings
+---@field enabled boolean
+---@field texture string built-in id or a LibSharedMedia "statusbar" name
+
 ---@class VersaUIOverridesConfig
 ---@field tot VersaUIFrameOverrideSettings
 ---@field focusTot VersaUIFrameOverrideSettings
@@ -55,6 +63,7 @@ Config.LIMITS = {
 ---@field barPadding VersaUIPaddingOverrideSettings
 ---@field mouseLookSpeed VersaUIMouseLookSpeedSettings
 ---@field hidePvpIcon boolean
+---@field barTexture VersaUIBarTextureSettings
 
 ---@return VersaUIFrameOverrideSettings
 local function DefaultFrameOverride()
@@ -76,6 +85,7 @@ function Config.GetDefaults()
         hidePvpIcon = false,
         barPadding = { enabled = false, paddingX = 2, paddingY = 2 },
         mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil },
+        barTexture = { enabled = false, texture = "flat" },
     }
 end
 
@@ -159,6 +169,17 @@ function Config.NormalizeMouseLookSpeed(settings)
     return settings
 end
 
+--- Normalizes one bar-texture table in place. Input is untrusted.
+---@param settings any
+---@return VersaUIBarTextureSettings
+function Config.NormalizeBarTexture(settings)
+    settings.enabled = (settings.enabled == true)
+    if type(settings.texture) ~= "string" or settings.texture == "" then
+        settings.texture = "flat"
+    end
+    return settings
+end
+
 --- Normalizes the whole overrides config in place. Input is untrusted.
 ---@param db any
 ---@return VersaUIOverridesConfig
@@ -196,6 +217,9 @@ function Config.Normalize(db)
     if db.mouseLookSpeed == nil then
         db.mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil }
     end
+    if db.barTexture == nil then
+        db.barTexture = { enabled = false, texture = "flat" }
+    end
 
     if db.focusTot == nil then
         db.focusTot = DefaultFrameOverride()
@@ -212,6 +236,7 @@ function Config.Normalize(db)
     db.hidePvpIcon = (db.hidePvpIcon == true)
     Config.NormalizePaddingOverride(db.barPadding)
     Config.NormalizeMouseLookSpeed(db.mouseLookSpeed)
+    Config.NormalizeBarTexture(db.barTexture)
     return db
 end
 

@@ -158,7 +158,7 @@ local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 440 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 560 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -293,6 +293,41 @@ local function CreateWindow()
     mouseStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     mouseStatus:SetPoint("TOPLEFT", 16, y - 28)
     UpdateMouseSpeedStatus()
+
+    y = y - 90
+
+    CreateHeader(frame, "Bar textures", y)
+    y = y - 34
+
+    local barTexture = db.barTexture
+    local barTextureCheck = CreateCheckBox(frame, "Replace health/mana bars")
+    barTextureCheck:SetPoint("TOPLEFT", 16, y)
+    barTextureCheck:SetChecked(barTexture.enabled == true)
+    barTextureCheck:SetScript("OnClick", function(self)
+        barTexture.enabled = (self:GetChecked() == true)
+        apply("barTexture")
+    end)
+
+    local barTextureDropdown = CreateFrame("Frame", "VersaUIBarTextureDropdown", frame, "UIDropDownMenuTemplate")
+    barTextureDropdown:SetPoint("TOPLEFT", 250, y + 6)
+    UIDropDownMenu_SetWidth(barTextureDropdown, 150)
+    UIDropDownMenu_Initialize(barTextureDropdown, function(_, level)
+        for _, option in ipairs(VersaUI.overrides.GetBarTextureOptions()) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = option.title
+            info.value = option.id
+            info.checked = (barTexture.texture == option.id)
+            info.func = function(selfArg)
+                barTexture.texture = selfArg.value
+                if barTexture.enabled then
+                    apply("barTexture")
+                end
+                UIDropDownMenu_SetSelectedValue(barTextureDropdown, selfArg.value)
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+    UIDropDownMenu_SetSelectedValue(barTextureDropdown, barTexture.texture)
 
     local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 12)

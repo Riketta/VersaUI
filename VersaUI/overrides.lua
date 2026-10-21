@@ -37,6 +37,14 @@ Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "targ
 ---@field yaw number
 ---@field pitch number
 
+--- One captured pre-VersaUI bar appearance (atlas + tint), so disabling the
+--- bar-texture override restores exactly what Blizzard had.
+---@class VersaUICapturedBarTexture
+---@field atlas string|nil
+---@field r number|nil
+---@field g number|nil
+---@field b number|nil
+
 local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
 local capturedAnchors = {} ---@type table<string, VersaUICapturedAnchor>
@@ -506,6 +514,270 @@ local function ApplyPvpIconToAll(hidden)
     end
 end
 
+-- === Unit-frame bar textures (health/mana replacement) ===
+
+local LSM_MEDIA_TYPE = "statusbar"
+
+--- Guaranteed built-ins; everything else comes from LibSharedMedia when
+--- Details!, Plater or SharedMedia are installed (all load before VersaUI,
+--- so their registered media is already in the library when we read it).
+local BUILTIN_BAR_TEXTURES = {
+    { id = "flat", title = "Flat (solid)", path = "Interface\\Buttons\\WHITE8X8" },
+}
+
+--- Nil-safe LibSharedMedia accessor. VersaUI must work with none of the
+--- media-carrying addons installed.
+---@return any|nil
+function Overrides.GetBarTextureMedia()
+    if LibStub == nil or LibStub.GetLibrary == nil then
+        return nil
+    end
+    local ok, LSM = pcall(LibStub.GetLibrary, LibStub, "LibSharedMedia-3.0", true)
+    if not ok then
+        return nil
+    end
+    return LSM
+end
+
+local function FetchBarTexturePath(mediaType, name)
+    local LSM = Overrides.GetBarTextureMedia()
+    if LSM == nil or LSM.Fetch == nil then
+        return nil
+    end
+    local ok, path = pcall(LSM.Fetch, LSM, mediaType, name)
+    if not ok then
+        return nil
+    end
+    return path
+end
+
+--- Resolves a texture id to a file path: built-ins first, then any
+--- LibSharedMedia "statusbar" media name. Unknown ids fall back to the flat
+--- texture, so uninstalled media degrades instead of erroring.
+---@param id string
+---@param fetch (fun(mediaType: string, name: string): string|nil)|nil
+---@return string
+function Overrides.ResolveBarTexturePath(id, fetch)
+    for _, builtin in ipairs(BUILTIN_BAR_TEXTURES) do
+        if builtin.id == id then
+            return builtin.path
+        end
+    end
+    local path = nil
+    if fetch ~= nil then
+        path = fetch(LSM_MEDIA_TYPE, id)
+    end
+    if type(path) == "string" and path ~= "" then
+        return path
+    end
+    return BUILTIN_BAR_TEXTURES[1].path
+end
+
+--- Dropdown options: built-ins plus the live LibSharedMedia list, evaluated
+--- lazily so late-registered media shows up without callbacks.
+---@return {id: string, title: string}[]
+function Overrides.GetBarTextureOptions()
+    local options = {}
+    for _, builtin in ipairs(BUILTIN_BAR_TEXTURES) do
+        options[#options + 1] = { id = builtin.id, title = builtin.title }
+    end
+    local LSM = Overrides.GetBarTextureMedia()
+    if LSM ~= nil and LSM.List ~= nil then
+        local ok, names = pcall(LSM.List, LSM, LSM_MEDIA_TYPE)
+        if ok and names ~= nil then
+            for _, name in ipairs(names) do
+                options[#options + 1] = { id = name, title = name }
+            end
+        end
+    end
+    return options
+end
+
+--- Blizzard's own coloring semantics, replicated for the flat replacement:
+--- these bars are all lockColor=true (Blizzard never tints them at runtime),
+--- the gradient color is baked into the atlas, so the flat swap has to set
+--- the color itself. Health: class color for the player herself -
+--- UnitSelectionColor("player") comes back white-ish on this client - and
+--- the reaction color for everything else. Mana: the power-type color.
+---@param unit string
+---@param isHealth boolean
+---@return number r
+---@return number g
+---@return number b
+local function GetBarColor(unit, isHealth)
+    if isHealth then
+        if UnitIsUnit ~= nil and UnitIsUnit(unit, "player") then
+            local _, classFileName = UnitClass(unit)
+            local classColor = classFileName ~= nil and RAID_CLASS_COLORS ~= nil and RAID_CLASS_COLORS[classFileName]
+            if classColor ~= nil and classColor.r ~= nil then
+                return classColor.r, classColor.g, classColor.b
+            end
+        end
+        if UnitSelectionColor ~= nil then
+            return UnitSelectionColor(unit)
+        end
+        return 1, 1, 1
+    end
+    local powerType, powerToken = UnitPowerType(unit)
+    local color = nil
+    if PowerBarColor ~= nil then
+        color = PowerBarColor[powerToken] or PowerBarColor[powerType]
+    end
+    if color ~= nil and color.r ~= nil then
+        return color.r, color.g, color.b
+    end
+    return 1, 1, 1
+end
+
+local capturedBarTextures = {} ---@type table<any, VersaUICapturedBarTexture>
+--- Set while we ourselves re-texture a bar; our own writes would otherwise
+--- re-trigger the per-bar SetStatusBarTexture/SetStatusBarColor post-hooks.
+local suppressBarTextureHook = false
+
+local function CaptureBarTexture(bar)
+    if capturedBarTextures[bar] ~= nil then
+        return
+    end
+    local captured = {} ---@type VersaUICapturedBarTexture
+    local texture = bar.GetStatusBarTexture ~= nil and bar:GetStatusBarTexture() or nil
+    if texture ~= nil and texture.GetAtlas ~= nil then
+        local atlas = texture:GetAtlas()
+        if not IsSecret(atlas) then
+            captured.atlas = atlas
+        end
+    end
+    if bar.GetStatusBarColor ~= nil then
+        local r, g, b = bar:GetStatusBarColor()
+        if not IsSecret(r) and not IsSecret(g) and not IsSecret(b) then
+            captured.r = r
+            captured.g = g
+            captured.b = b
+        end
+    end
+    capturedBarTextures[bar] = captured
+end
+
+--- The unit-frame bars VersaUI re-textures, nil-guarded per element so flavor
+--- drift degrades to "fewer bars" instead of erroring.
+---@return {bar: any, unit: string, isHealth: boolean}[]
+local function GetBarEntries()
+    local entries = {}
+    local function AddBars(frame, unit, contentKey, mainKey)
+        local content = frame and frame[contentKey]
+        local main = content and content[mainKey]
+        if main == nil then
+            return
+        end
+        if main.HealthBarsContainer ~= nil and main.HealthBarsContainer.HealthBar ~= nil then
+            entries[#entries + 1] = { bar = main.HealthBarsContainer.HealthBar, unit = unit, isHealth = true }
+        end
+        if main.ManaBarArea ~= nil and main.ManaBarArea.ManaBar ~= nil then
+            entries[#entries + 1] = { bar = main.ManaBarArea.ManaBar, unit = unit, isHealth = false }
+        end
+    end
+    if PlayerFrame ~= nil then
+        AddBars(PlayerFrame, "player", "PlayerFrameContent", "PlayerFrameContentMain")
+    end
+    if TargetFrame ~= nil then
+        AddBars(TargetFrame, "target", "TargetFrameContent", "TargetFrameContentMain")
+    end
+    if FocusFrame ~= nil then
+        AddBars(FocusFrame, "focus", "TargetFrameContent", "TargetFrameContentMain")
+    end
+    return entries
+end
+
+--- Re-textures one bar. Texture content and tint are cosmetic writes, but
+--- RunFrameWrite still gates them per bar so a flavor where the bars report
+--- protected defers them to combat end.
+---@param entry {bar: any, unit: string, isHealth: boolean}
+---@param path string
+local function ApplyBarTextureToBar(entry, path)
+    local bar = entry.bar
+    if bar.SetStatusBarTexture == nil then
+        return
+    end
+    CaptureBarTexture(bar)
+    RunFrameWrite(bar, function()
+        suppressBarTextureHook = true
+        bar:SetStatusBarTexture(path)
+        if bar.SetStatusBarColor ~= nil then
+            local r, g, b = GetBarColor(entry.unit, entry.isHealth)
+            bar:SetStatusBarColor(r, g, b)
+        end
+        suppressBarTextureHook = false
+    end)
+end
+
+--- Re-asserts the override right after Blizzard re-textures or re-tints a bar
+--- we own (UnitFrameManaBar_UpdateType on power-type changes, alternate power
+--- swaps, ...). Mirrors the spell bar SetPoint strategy: same-execution
+--- re-apply, so no gradient frame can be painted.
+local function OnStatusBarTextureChanged(hookedBar)
+    if suppressBarTextureHook or db == nil or not db.barTexture.enabled then
+        return
+    end
+    local path = Overrides.ResolveBarTexturePath(db.barTexture.texture, FetchBarTexturePath)
+    for _, entry in ipairs(GetBarEntries()) do
+        if entry.bar == hookedBar then
+            ApplyBarTextureToBar(entry, path)
+            return
+        end
+    end
+end
+
+--- UpdateHealthBarVisuals re-sets the health atlas straight on the texture
+--- object (classification changes, minus mobs on retail), bypassing
+--- SetStatusBarTexture - so the per-bar post-hook never fires and this hook
+--- re-asserts one tick later instead.
+---@param unit string
+local function OnHealthBarVisualsChanged(unit)
+    if suppressBarTextureHook or db == nil or not db.barTexture.enabled then
+        return
+    end
+    C_Timer.After(0, function()
+        if db == nil or not db.barTexture.enabled then
+            return
+        end
+        local path = Overrides.ResolveBarTexturePath(db.barTexture.texture, FetchBarTexturePath)
+        for _, entry in ipairs(GetBarEntries()) do
+            if entry.unit == unit then
+                ApplyBarTextureToBar(entry, path)
+            end
+        end
+    end)
+end
+
+local function ApplyBarTextureToAll()
+    if db == nil or not db.barTexture.enabled then
+        return
+    end
+    local path = Overrides.ResolveBarTexturePath(db.barTexture.texture, FetchBarTexturePath)
+    for _, entry in ipairs(GetBarEntries()) do
+        ApplyBarTextureToBar(entry, path)
+    end
+end
+
+local function ResetBarTextureToAll()
+    for _, entry in ipairs(GetBarEntries()) do
+        local bar = entry.bar
+        local captured = capturedBarTextures[bar]
+        if captured ~= nil and bar.SetStatusBarTexture ~= nil then
+            RunFrameWrite(bar, function()
+                suppressBarTextureHook = true
+                if captured.atlas ~= nil then
+                    bar:SetStatusBarTexture(captured.atlas)
+                end
+                if captured.r ~= nil and bar.SetStatusBarColor ~= nil then
+                    bar:SetStatusBarColor(captured.r, captured.g, captured.b)
+                end
+                suppressBarTextureHook = false
+            end)
+            capturedBarTextures[bar] = nil
+        end
+    end
+end
+
 -- === Hook handlers ===
 
 ---@param targetFrame any
@@ -708,11 +980,25 @@ local function HookBlizzardFrames()
             Overrides.OnCheckFaction(targetFrame)
         end)
     end
+    for _, entry in ipairs(GetBarEntries()) do
+        HookFrameMethod(entry.bar, "SetStatusBarTexture", function(hookedBar)
+            OnStatusBarTextureChanged(hookedBar)
+        end)
+        HookFrameMethod(entry.bar, "SetStatusBarColor", function(hookedBar)
+            OnStatusBarTextureChanged(hookedBar)
+        end)
+    end
+    HookFrameMethod(TargetFrame, "UpdateHealthBarVisuals", function()
+        OnHealthBarVisualsChanged("target")
+    end)
+    HookFrameMethod(FocusFrame, "UpdateHealthBarVisuals", function()
+        OnHealthBarVisualsChanged("focus")
+    end)
 end
 
 -- === Public API ===
 
----@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed" or "hidePvpIcon"
+---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed", "hidePvpIcon" or "barTexture"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -742,6 +1028,15 @@ function Overrides.ApplyFeature(id)
 
     if id == "hidePvpIcon" then
         ApplyPvpIconToAll(db.hidePvpIcon == true)
+        return
+    end
+
+    if id == "barTexture" then
+        if db.barTexture.enabled then
+            ApplyBarTextureToAll()
+        else
+            ResetBarTextureToAll()
+        end
         return
     end
 
@@ -825,6 +1120,9 @@ function Overrides.ApplyAll()
     if db.mouseLookSpeed.enabled then
         Overrides.ApplyFeature("mouseLookSpeed")
     end
+    if db.barTexture.enabled then
+        Overrides.ApplyFeature("barTexture")
+    end
 end
 
 --- Prints the runtime facts about the spell bars the override engine depends
@@ -891,6 +1189,7 @@ function Overrides.Init(overridesDB)
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("UNIT_FACTION")
+    eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
     eventFrame:RegisterUnitEvent("UNIT_AURA", "target", "focus")
@@ -920,12 +1219,22 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.hidePvpIcon then
                 ApplyPvpIconToAll(true)
             end
+            if db ~= nil and db.barTexture.enabled then
+                ApplyBarTextureToAll()
+            end
         elseif event == "UNIT_FACTION" then
             if db ~= nil and db.factionColorDisabled then
                 ApplyFactionColorToAll(true)
             end
             if db ~= nil and db.hidePvpIcon then
                 ApplyPvpIconToAll(true)
+            end
+            if db ~= nil and db.barTexture.enabled then
+                ApplyBarTextureToAll()
+            end
+        elseif event == "UNIT_DISPLAYPOWER" then
+            if db ~= nil and db.barTexture.enabled and (unit == "player" or unit == "target" or unit == "focus") then
+                ApplyBarTextureToAll()
             end
         end
     end)

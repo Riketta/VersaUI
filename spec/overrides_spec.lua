@@ -50,6 +50,31 @@ describe("level pair anchoring", function()
     end)
 end)
 
+describe("bar texture resolution", function()
+    local function MakeFetch(paths)
+        return function(_, name)
+            return paths[name]
+        end
+    end
+
+    it("resolves built-in ids without consulting media", function()
+        assert.equals(Overrides.ResolveBarTexturePath("flat", MakeFetch({})), "Interface\\Buttons\\WHITE8X8")
+    end)
+
+    it("resolves LibSharedMedia names", function()
+        assert.equals(
+            Overrides.ResolveBarTexturePath("Solid", MakeFetch({ Solid = "Interface\\Buttons\\WHITE8X8" })),
+            "Interface\\Buttons\\WHITE8X8"
+        )
+    end)
+
+    it("falls back to the flat texture on unknown or broken ids", function()
+        assert.equals(Overrides.ResolveBarTexturePath("gone", MakeFetch({})), "Interface\\Buttons\\WHITE8X8")
+        assert.equals(Overrides.ResolveBarTexturePath("gone", MakeFetch({ gone = "" })), "Interface\\Buttons\\WHITE8X8")
+        assert.equals(Overrides.ResolveBarTexturePath("gone", nil), "Interface\\Buttons\\WHITE8X8")
+    end)
+end)
+
 describe("mouse look speed cvar parsing", function()
     it("parses CVar strings into numbers", function()
         assert.equals(Overrides.ParseMouseSpeed("180", 90), 180)
