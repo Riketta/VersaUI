@@ -158,7 +158,7 @@ local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 410 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 440 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -202,6 +202,14 @@ local function CreateWindow()
     factionColor:SetScript("OnClick", function(self)
         db.factionColorDisabled = (self:GetChecked() == true)
         apply("factionColorDisabled")
+    end)
+    y = y - 30
+
+    local hidePvpIcon = CreateToggleRow("Hide PvP badge icon", y)
+    hidePvpIcon:SetChecked(db.hidePvpIcon == true)
+    hidePvpIcon:SetScript("OnClick", function(self)
+        db.hidePvpIcon = (self:GetChecked() == true)
+        apply("hidePvpIcon")
     end)
     y = y - 44
 

@@ -41,6 +41,7 @@ files["VersaUI"] = {
 		"MultiBarBottomRight",
 		"PetCastingBarFrame",
 		"PetFrame",
+		"PlayerFrame",
 		"SLASH_VERSAUI1",
 		"SlashCmdList",
 		"SetCVar",

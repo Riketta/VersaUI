@@ -465,6 +465,47 @@ local function ApplyFactionColorToAll(disabled)
     end
 end
 
+--- Regions rendering the PvP badge: the contextual PvpBackgroundIcon on the
+--- TargetFrameTemplate family (the visible badge on camelot, an empty
+--- background plate on retail, where the sibling PvpIcon carries the badge)
+--- and the player frame's main content on camelot. Nil-guarded per element,
+--- so flavors without a member simply contribute nothing.
+---@return any[]
+local function GetPvpIconRegions()
+    local regions = {}
+    for _, frame in ipairs({ TargetFrame, FocusFrame }) do
+        local content = frame and frame.TargetFrameContent
+        local contextual = content and content.TargetFrameContentContextual
+        if contextual ~= nil then
+            if contextual.PvpBackgroundIcon ~= nil then
+                regions[#regions + 1] = contextual.PvpBackgroundIcon
+            end
+            if contextual.PvpIcon ~= nil then
+                regions[#regions + 1] = contextual.PvpIcon
+            end
+        end
+    end
+    local playerContent = PlayerFrame and PlayerFrame.PlayerFrameContent
+    local playerMain = playerContent and playerContent.PlayerFrameContentMain
+    if playerMain ~= nil and playerMain.PvpBackgroundIcon ~= nil then
+        regions[#regions + 1] = playerMain.PvpBackgroundIcon
+    end
+    return regions
+end
+
+--- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard drives
+--- these textures purely through SetShown/SetTextureOrAtlas
+--- (UnitFrameUtil.UpdateUnitPvPIndicator) and never writes their alpha, so
+--- SetAlpha(0) survives every PvP-indicator update while keeping IsShown()
+--- true for Blizzard's own checks (combo point layout, PvP update sound).
+---@param hidden boolean
+local function ApplyPvpIconToAll(hidden)
+    local alpha = hidden and 0 or 1
+    for _, region in ipairs(GetPvpIconRegions()) do
+        region:SetAlpha(alpha)
+    end
+end
+
 -- === Hook handlers ===
 
 ---@param targetFrame any
@@ -671,7 +712,7 @@ end
 
 -- === Public API ===
 
----@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding" or "mouseLookSpeed"
+---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed" or "hidePvpIcon"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -696,6 +737,11 @@ function Overrides.ApplyFeature(id)
 
     if id == "factionColorDisabled" then
         ApplyFactionColorToAll(db.factionColorDisabled == true)
+        return
+    end
+
+    if id == "hidePvpIcon" then
+        ApplyPvpIconToAll(db.hidePvpIcon == true)
         return
     end
 
@@ -769,6 +815,9 @@ function Overrides.ApplyAll()
     end
     if db.factionColorDisabled then
         ApplyFactionColorToAll(true)
+    end
+    if db.hidePvpIcon then
+        ApplyPvpIconToAll(true)
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")
@@ -868,9 +917,15 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.factionColorDisabled then
                 ApplyFactionColorToAll(true)
             end
+            if db ~= nil and db.hidePvpIcon then
+                ApplyPvpIconToAll(true)
+            end
         elseif event == "UNIT_FACTION" then
             if db ~= nil and db.factionColorDisabled then
                 ApplyFactionColorToAll(true)
+            end
+            if db ~= nil and db.hidePvpIcon then
+                ApplyPvpIconToAll(true)
             end
         end
     end)

@@ -54,6 +54,7 @@ Config.LIMITS = {
 ---@field factionColorDisabled boolean
 ---@field barPadding VersaUIPaddingOverrideSettings
 ---@field mouseLookSpeed VersaUIMouseLookSpeedSettings
+---@field hidePvpIcon boolean
 
 ---@return VersaUIFrameOverrideSettings
 local function DefaultFrameOverride()
@@ -72,6 +73,7 @@ function Config.GetDefaults()
         petCastBar = DefaultFrameOverride(),
         petAurasOnTop = false,
         factionColorDisabled = false,
+        hidePvpIcon = false,
         barPadding = { enabled = false, paddingX = 2, paddingY = 2 },
         mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil },
     }
@@ -185,6 +187,9 @@ function Config.Normalize(db)
     if db.factionColorDisabled == nil then
         db.factionColorDisabled = false
     end
+    if db.hidePvpIcon == nil then
+        db.hidePvpIcon = false
+    end
     if db.barPadding == nil then
         db.barPadding = { enabled = false, paddingX = 2, paddingY = 2 }
     end
@@ -204,6 +209,7 @@ function Config.Normalize(db)
     Config.NormalizeFrameOverride(db.petCastBar)
     db.petAurasOnTop = (db.petAurasOnTop == true)
     db.factionColorDisabled = (db.factionColorDisabled == true)
+    db.hidePvpIcon = (db.hidePvpIcon == true)
     Config.NormalizePaddingOverride(db.barPadding)
     Config.NormalizeMouseLookSpeed(db.mouseLookSpeed)
     return db
