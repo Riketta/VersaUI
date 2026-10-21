@@ -347,22 +347,44 @@ local function ApplySpellBarOverride(id, frame, settings)
     ApplyAbsoluteOverride(id, frame, settings)
 end
 
+--- Runs `fn` immediately when `frame` accepts layout writes in the current
+--- context, otherwise defers it through the combat guard. Protected frames
+--- (secure unit buttons and their children) refuse tainted writes during
+--- combat, but a frame that reports unprotected can be re-pointed live -
+--- which removes the visible base-position flash entirely. The protection
+--- status is checked per call, so no flavor assumptions are baked in.
+---@param frame any
+---@param fn fun()
+local function RunFrameWrite(frame, fn)
+    if guard == nil then
+        return
+    end
+    if frame ~= nil and frame.IsProtected ~= nil and not frame:IsProtected() then
+        fn()
+        return
+    end
+    guard:Run(fn)
+end
+
 --- Re-applies both spell bars one tick later. Blizzard can re-anchor them on
 --- many paths (target changes, aura container updates, casts); the tick makes
---- sure we run after Blizzard's own handler in the same event burst.
+--- sure we run after Blizzard's own handler in the same event burst. Each bar
+--- decides independently whether it can be written right now (see
+--- RunFrameWrite) or has to wait for combat to end.
 local function ReapplySpellBarsNextTick()
     if guard == nil then
         return
     end
     C_Timer.After(0, function()
-        guard:Run(function()
-            for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
-                local settings = GetFrameSettings(id)
-                if settings ~= nil and settings.enabled then
-                    ApplySpellBarOverride(id, ResolveFrame(id), settings)
-                end
+        for _, id in ipairs({ "targetCastBar", "focusCastBar" }) do
+            local settings = GetFrameSettings(id)
+            if settings ~= nil and settings.enabled then
+                local frame = ResolveFrame(id)
+                RunFrameWrite(frame, function()
+                    ApplySpellBarOverride(id, frame, settings)
+                end)
             end
-        end)
+        end
     end)
 end
 
@@ -448,7 +470,7 @@ function Overrides.OnSpellBarAdjusted(id, bar)
     if settings == nil or not settings.enabled then
         return
     end
-    guard:Run(function()
+    RunFrameWrite(bar, function()
         ApplyAbsoluteOverride(id, bar, settings)
     end)
 end
@@ -639,13 +661,19 @@ function Overrides.ApplyFeature(id)
     end
 
     if settings.enabled then
-        guard:Run(function()
-            if id == "targetCastBar" or id == "focusCastBar" then
-                ApplySpellBarOverride(id, frame, settings)
-            else
+        if id == "targetCastBar" or id == "focusCastBar" or id == "petCastBar" then
+            RunFrameWrite(frame, function()
+                if id == "petCastBar" then
+                    ApplyAbsoluteOverride(id, frame, settings)
+                else
+                    ApplySpellBarOverride(id, frame, settings)
+                end
+            end)
+        else
+            RunFrameWrite(frame, function()
                 ApplyAbsoluteOverride(id, frame, settings)
-            end
-        end)
+            end)
+        end
     else
         guard:Run(function()
             ResetToCaptured(id, frame)
