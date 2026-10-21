@@ -138,7 +138,32 @@ local function CaptureAnchor(id, frame)
         return nil
     end
     local numPoints = frame:GetNumPoints()
-    if IsSecret(numPoints) or numPoints == 0 then
+    if IsSecret(numPoints) then
+        -- Secure-managed layout (aura container anchoring): the engine hides
+        -- the real base from tainted readers. Relative mode must still apply,
+        -- so fall back to Blizzard's own spell bar base from the reference
+        -- source (TargetFrame.lua:AdjustPosition, plain-anchor constants).
+        -- Deliberately seeded once: a later readable state does not re-capture,
+        -- and disabling self-heals because Blizzard re-asserts its real anchor
+        -- on the next AdjustPosition.
+        if id == "targetCastBar" or id == "focusCastBar" then
+            local parent = frame:GetParent()
+            if parent ~= nil and not IsSecret(parent) then
+                local anchor = {
+                    point = "TOPLEFT",
+                    relativeTo = parent,
+                    relativePoint = "BOTTOMLEFT",
+                    x = 43,
+                    y = -5,
+                    scale = 1,
+                } ---@type VersaUICapturedAnchor
+                capturedAnchors[id] = anchor
+                return anchor
+            end
+        end
+        return nil
+    end
+    if numPoints == 0 then
         return nil
     end
     local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
@@ -169,23 +194,25 @@ end
 --- base anchor (offsets are deltas, so it follows the parent frame), absolute
 --- mode pins it to the screen center coordinates. Scale is a multiplier of the
 --- captured Blizzard scale (focus ToT has a non-unit default scale).
---- Idempotent: always derives from the captured base.
+--- Idempotent: always derives from the captured base. Absolute mode needs no
+--- base at all, so it also works while the layout is secret-managed.
 ---@param captureId string unique key for the captured base anchor
 ---@param frame any
 ---@param settings VersaUIFrameOverrideSettings
 ---@param offsetX number
 ---@param offsetY number
 local function ApplyElementOverride(captureId, frame, settings, offsetX, offsetY)
+    if not settings.relativeToParent then
+        frame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+        frame:SetScale(settings.scale)
+        return
+    end
     local base = CaptureAnchor(captureId, frame)
     if base == nil then
         return
     end
-    if settings.relativeToParent then
-        local relativeTo = base.relativeTo or frame:GetParent()
-        frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + offsetX, base.y + offsetY)
-    else
-        frame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
-    end
+    local relativeTo = base.relativeTo or frame:GetParent()
+    frame:SetPoint(base.point, relativeTo, base.relativePoint, base.x + offsetX, base.y + offsetY)
     frame:SetScale((base.scale or 1) * settings.scale)
 end
 
