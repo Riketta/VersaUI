@@ -13,6 +13,8 @@ Config.LIMITS = {
     offsetMax = 2000,
     paddingMin = 0,
     paddingMax = 40,
+    mouseSpeedMin = 1,
+    mouseSpeedMax = 720,
 }
 
 ---@class VersaUIFrameOverrideSettings
@@ -27,6 +29,19 @@ Config.LIMITS = {
 ---@field paddingX number
 ---@field paddingY number
 
+--- Camera look-speed override. The game's Mouse Look Speed slider only writes
+--- cameraYawMoveSpeed/cameraPitchMoveSpeed through a UI-side clamp (90-270 in
+--- Blizzard_SettingsDefinitions_Frame/Controls.lua); the CVars themselves are
+--- plain degrees/sec, so anything below that is legal. The original* fields
+--- record the pre-VersaUI values on first apply so disabling restores them
+--- across sessions (SetCVar persists to Config.wtf).
+---@class VersaUIMouseLookSpeedSettings
+---@field enabled boolean
+---@field yaw number
+---@field pitch number
+---@field originalYaw number|nil
+---@field originalPitch number|nil
+
 ---@class VersaUIOverridesConfig
 ---@field tot VersaUIFrameOverrideSettings
 ---@field focusTot VersaUIFrameOverrideSettings
@@ -38,6 +53,7 @@ Config.LIMITS = {
 ---@field petAurasOnTop boolean
 ---@field factionColorDisabled boolean
 ---@field barPadding VersaUIPaddingOverrideSettings
+---@field mouseLookSpeed VersaUIMouseLookSpeedSettings
 
 ---@return VersaUIFrameOverrideSettings
 local function DefaultFrameOverride()
@@ -57,6 +73,7 @@ function Config.GetDefaults()
         petAurasOnTop = false,
         factionColorDisabled = false,
         barPadding = { enabled = false, paddingX = 2, paddingY = 2 },
+        mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil },
     }
 end
 
@@ -116,6 +133,30 @@ function Config.NormalizePaddingOverride(settings)
     return settings
 end
 
+--- Normalizes one mouse-look-speed table in place. Input is untrusted.
+---@param settings any
+---@return VersaUIMouseLookSpeedSettings
+function Config.NormalizeMouseLookSpeed(settings)
+    settings.enabled = (settings.enabled == true)
+    settings.yaw = Config.ClampValue(
+        Config.ParseNumber(settings.yaw, 60),
+        Config.LIMITS.mouseSpeedMin,
+        Config.LIMITS.mouseSpeedMax
+    )
+    settings.pitch = Config.ClampValue(
+        Config.ParseNumber(settings.pitch, 30),
+        Config.LIMITS.mouseSpeedMin,
+        Config.LIMITS.mouseSpeedMax
+    )
+    if type(settings.originalYaw) ~= "number" then
+        settings.originalYaw = nil
+    end
+    if type(settings.originalPitch) ~= "number" then
+        settings.originalPitch = nil
+    end
+    return settings
+end
+
 --- Normalizes the whole overrides config in place. Input is untrusted.
 ---@param db any
 ---@return VersaUIOverridesConfig
@@ -147,6 +188,9 @@ function Config.Normalize(db)
     if db.barPadding == nil then
         db.barPadding = { enabled = false, paddingX = 2, paddingY = 2 }
     end
+    if db.mouseLookSpeed == nil then
+        db.mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil }
+    end
 
     if db.focusTot == nil then
         db.focusTot = DefaultFrameOverride()
@@ -161,6 +205,7 @@ function Config.Normalize(db)
     db.petAurasOnTop = (db.petAurasOnTop == true)
     db.factionColorDisabled = (db.factionColorDisabled == true)
     Config.NormalizePaddingOverride(db.barPadding)
+    Config.NormalizeMouseLookSpeed(db.mouseLookSpeed)
     return db
 end
 

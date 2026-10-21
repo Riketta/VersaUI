@@ -31,6 +31,12 @@ Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "targ
 ---@field text any|nil
 ---@field highLevelTexture any|nil
 
+--- The pre-VersaUI camera speeds, captured on first apply so disabling can
+--- restore exactly what the user had.
+---@class VersaUIMouseSpeedCapture
+---@field yaw number
+---@field pitch number
+
 local db = nil ---@type VersaUIOverridesConfig|nil
 local guard = nil ---@type VersaUIGuard|nil
 local capturedAnchors = {} ---@type table<string, VersaUICapturedAnchor>
@@ -538,6 +544,60 @@ function Overrides.ApplyBarPadding(bar, settings)
     bar:Layout()
 end
 
+-- === Mouse look speed (CVar override) ===
+
+--- Parses one C_CVar.GetCVar read into a number, falling back to Blizzard's
+--- camera defaults (180 yaw / 90 pitch, the values behind the Mouse Look Speed
+--- slider in Blizzard_SettingsDefinitions_Frame/Controls.lua).
+---@param raw any raw CVar read (string|nil)
+---@param fallback number
+---@return number
+function Overrides.ParseMouseSpeed(raw, fallback)
+    local value = tonumber(raw)
+    if value == nil then
+        return fallback
+    end
+    return value
+end
+
+--- Reads the live camera speeds. Called once, before VersaUI ever writes them.
+---@return VersaUIMouseSpeedCapture
+function Overrides.CaptureMouseSpeed()
+    return {
+        yaw = Overrides.ParseMouseSpeed(C_CVar.GetCVar("cameraYawMoveSpeed"), 180),
+        pitch = Overrides.ParseMouseSpeed(C_CVar.GetCVar("cameraPitchMoveSpeed"), 90),
+    }
+end
+
+--- Writes the override speeds. SetCVar and these CVars are legal from tainted
+--- code in combat, and the game slider's 90-270 minimum is a UI-side clamp only
+--- (Settings.CreateSliderOptions(90, 270, 10)), so sub-90 values stick. The
+--- original values persist in SavedVariables, so a disable restores them even
+--- after a reload (SetCVar alone would have persisted our override instead).
+---@param settings VersaUIMouseLookSpeedSettings
+function Overrides.ApplyMouseLookSpeed(settings)
+    if settings.originalYaw == nil or settings.originalPitch == nil then
+        local captured = Overrides.CaptureMouseSpeed()
+        settings.originalYaw = captured.yaw
+        settings.originalPitch = captured.pitch
+    end
+    SetCVar("cameraYawMoveSpeed", settings.yaw)
+    SetCVar("cameraPitchMoveSpeed", settings.pitch)
+end
+
+--- Restores the captured original speeds and forgets the capture, so the next
+--- enable re-captures whatever is live then.
+---@param settings VersaUIMouseLookSpeedSettings
+function Overrides.ResetMouseLookSpeed(settings)
+    if settings.originalYaw == nil or settings.originalPitch == nil then
+        return
+    end
+    SetCVar("cameraYawMoveSpeed", settings.originalYaw)
+    SetCVar("cameraPitchMoveSpeed", settings.originalPitch)
+    settings.originalYaw = nil
+    settings.originalPitch = nil
+end
+
 -- === Hook registration ===
 
 -- Frames we already post-hooked, keyed [frame][method]. Keeps the registration
@@ -611,7 +671,7 @@ end
 
 -- === Public API ===
 
----@param id string one of Overrides.FEATURES, "petAurasOnTop" or "barPadding"
+---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding" or "mouseLookSpeed"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -636,6 +696,15 @@ function Overrides.ApplyFeature(id)
 
     if id == "factionColorDisabled" then
         ApplyFactionColorToAll(db.factionColorDisabled == true)
+        return
+    end
+
+    if id == "mouseLookSpeed" then
+        if db.mouseLookSpeed.enabled then
+            Overrides.ApplyMouseLookSpeed(db.mouseLookSpeed)
+        else
+            Overrides.ResetMouseLookSpeed(db.mouseLookSpeed)
+        end
         return
     end
 
@@ -703,6 +772,9 @@ function Overrides.ApplyAll()
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")
+    end
+    if db.mouseLookSpeed.enabled then
+        Overrides.ApplyFeature("mouseLookSpeed")
     end
 end
 

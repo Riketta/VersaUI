@@ -17,6 +17,19 @@ local FRAME_FEATURES = {
 }
 
 local frame = nil ---@type any|nil
+local mouseStatus = nil ---@type any|nil
+
+--- Shows the live camera CVar values so a below-slider-minimum speed is
+--- visibly in effect (the game slider would keep displaying its clamped end).
+local function UpdateMouseSpeedStatus()
+    if mouseStatus == nil or C_CVar == nil or C_CVar.GetCVar == nil then
+        return
+    end
+    local parse = VersaUI.overrides.ParseMouseSpeed
+    local yaw = parse(C_CVar.GetCVar("cameraYawMoveSpeed"), 0)
+    local pitch = parse(C_CVar.GetCVar("cameraPitchMoveSpeed"), 0)
+    mouseStatus:SetText(string.format("Live: yaw %g, pitch %g deg/s (game slider range 90-270)", yaw, pitch))
+end
 
 ---@param parent any
 ---@param title string
@@ -144,14 +157,17 @@ end
 local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
-    -- toggles/padding/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 290 + #FRAME_FEATURES * 36)
+    -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
+    frame:SetSize(520, 410 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    frame:SetScript("OnShow", function()
+        UpdateMouseSpeedStatus()
+    end)
     -- BasicFrameTemplateWithInset has no SetTitle method; the title is a
     -- named FontString on the template (SharedUIPanelTemplates.xml).
     if frame.TitleText ~= nil then
@@ -224,6 +240,51 @@ local function CreateWindow()
             apply("barPadding")
         end
     end)
+
+    y = y - 52
+
+    CreateHeader(frame, "Mouse look speed", y)
+    y = y - 34
+
+    local mouse = db.mouseLookSpeed
+    local mouseCheck = CreateCheckBox(frame, "Below game minimum")
+    mouseCheck:SetPoint("TOPLEFT", 16, y)
+    mouseCheck:SetChecked(mouse.enabled == true)
+    mouseCheck:SetScript("OnClick", function(self)
+        mouse.enabled = (self:GetChecked() == true)
+        apply("mouseLookSpeed")
+        UpdateMouseSpeedStatus()
+    end)
+
+    local mouseYawBox = CreateNumberBox(frame, "Yaw deg/s", 52)
+    mouseYawBox:SetPoint("TOPLEFT", 250, y - 3)
+    WireNumberBox(mouseYawBox, function()
+        return mouse.yaw
+    end, function(value)
+        mouse.yaw =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.mouseSpeedMin, VersaUI.config.LIMITS.mouseSpeedMax)
+        if mouse.enabled then
+            apply("mouseLookSpeed")
+        end
+        UpdateMouseSpeedStatus()
+    end)
+
+    local mousePitchBox = CreateNumberBox(frame, "Pitch deg/s", 52)
+    mousePitchBox:SetPoint("TOPLEFT", 316, y - 3)
+    WireNumberBox(mousePitchBox, function()
+        return mouse.pitch
+    end, function(value)
+        mouse.pitch =
+            VersaUI.config.ClampValue(value, VersaUI.config.LIMITS.mouseSpeedMin, VersaUI.config.LIMITS.mouseSpeedMax)
+        if mouse.enabled then
+            apply("mouseLookSpeed")
+        end
+        UpdateMouseSpeedStatus()
+    end)
+
+    mouseStatus = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    mouseStatus:SetPoint("TOPLEFT", 16, y - 28)
+    UpdateMouseSpeedStatus()
 
     local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 12)
