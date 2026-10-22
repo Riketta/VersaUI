@@ -56,6 +56,7 @@ files["VersaUI"] = {
 		"UIDropDownMenu_SetSelectedValue",
 		"UIDropDownMenu_SetWidth",
 		"UnitClass",
+		"UnitIsPlayer",
 		"UnitIsUnit",
 		"UnitPowerType",
 		"UnitSelectionColor",

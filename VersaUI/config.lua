@@ -75,6 +75,7 @@ Config.LIMITS = {
 ---@field petCastBar VersaUIFrameOverrideSettings
 ---@field petAurasOnTop boolean
 ---@field factionColorDisabled boolean
+---@field totBarNudge boolean
 ---@field barPadding VersaUIPaddingOverrideSettings
 ---@field mouseLookSpeed VersaUIMouseLookSpeedSettings
 ---@field hidePvpIcon boolean
@@ -100,6 +101,7 @@ function Config.GetDefaults()
         factionColorDisabled = false,
         hidePvpIcon = false,
         hideFocusAuras = false,
+        totBarNudge = true,
         barPadding = { enabled = false, paddingX = 2, paddingY = 2 },
         mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil },
         barTexture = {
@@ -258,6 +260,9 @@ function Config.Normalize(db)
     if db.hideFocusAuras == nil then
         db.hideFocusAuras = false
     end
+    if db.totBarNudge == nil then
+        db.totBarNudge = true
+    end
     if db.barPadding == nil then
         db.barPadding = { enabled = false, paddingX = 2, paddingY = 2 }
     end
@@ -294,6 +299,7 @@ function Config.Normalize(db)
     db.factionColorDisabled = (db.factionColorDisabled == true)
     db.hidePvpIcon = (db.hidePvpIcon == true)
     db.hideFocusAuras = (db.hideFocusAuras == true)
+    db.totBarNudge = (db.totBarNudge == true)
     Config.NormalizePaddingOverride(db.barPadding)
     Config.NormalizeMouseLookSpeed(db.mouseLookSpeed)
     Config.NormalizeBarTexture(db.barTexture)

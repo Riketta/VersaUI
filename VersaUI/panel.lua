@@ -260,7 +260,7 @@ local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 680 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 710 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -320,6 +320,14 @@ local function CreateWindow()
     hideFocusAuras:SetScript("OnClick", function(self)
         db.hideFocusAuras = (self:GetChecked() == true)
         apply("hideFocusAuras")
+    end)
+    y = y - 30
+
+    local totNudge = CreateToggleRow("Align ToT health bar (trim 2px)", y)
+    totNudge:SetChecked(db.totBarNudge == true)
+    totNudge:SetScript("OnClick", function(self)
+        db.totBarNudge = (self:GetChecked() == true)
+        apply("totBarNudge")
     end)
     y = y - 44
 
@@ -471,6 +479,7 @@ function Panel.Init()
     SlashCmdList["VERSAUI"] = function(msg)
         if msg == "debug" then
             VersaUI.overrides.DumpSpellBarDiagnostics()
+            VersaUI.overrides.DumpBarTextureDiagnostics()
             return
         end
         if frame:IsShown() then

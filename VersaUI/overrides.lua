@@ -634,11 +634,15 @@ function Overrides.GetBarTextureOptions()
     return options
 end
 
---- RAID_CLASS_COLORS lookup for any player unit; nil for NPCs and other
---- units without a class.
+--- RAID_CLASS_COLORS lookup, restricted to player units: NPCs and other
+--- units without a player flag always get the fallback chain instead, even
+--- if UnitClass ever returned data for them.
 ---@param unit string
 ---@return {r: number, g: number, b: number}|nil
 local function GetUnitClassColorTable(unit)
+    if UnitIsPlayer == nil or not UnitIsPlayer(unit) then
+        return nil
+    end
     if UnitClass == nil or RAID_CLASS_COLORS == nil then
         return nil
     end
@@ -654,11 +658,13 @@ end
 --- these bars are all lockColor=true (Blizzard never tints them at runtime),
 --- the gradient color is baked into the atlas, so the flat swap has to set
 --- the color itself. Health, in priority order: the unit's class color when
---- the class-color mode is on (units without a class fall through), then the
---- user's override color when enabled, then - for the automatic mode - class
---- color for the player herself (UnitSelectionColor("player") comes back
---- white-ish on this client) and the reaction color for everything else.
---- Mana: the user's custom color when enabled, else the power-type color.
+--- the class-color mode is on (player units only - NPCs always take the
+--- fallback: the user's override color when enabled, else Blizzard's legacy
+--- health green), then the user's override color when enabled, then - for the
+--- automatic mode - class color for the player herself
+--- (UnitSelectionColor("player") comes back white-ish on this client) and
+--- the reaction color for everything else. Mana: the user's custom color
+--- when enabled, else the power-type color.
 ---@param unit string
 ---@param isHealth boolean
 ---@return number r
@@ -710,6 +716,12 @@ local capturedBarTextures = {} ---@type table<any, VersaUICapturedBarTexture>
 --- re-trigger the per-bar SetStatusBarTexture/SetStatusBarColor post-hooks.
 local suppressBarTextureHook = false
 
+--- Our replacement fill texture per bar, created once and re-used across
+--- re-asserts (SetStatusBarTexture with a path would spawn a fresh element
+--- every call). The element that was in the slot before us gets parked with
+--- alpha 0 so it cannot bleed through the value-unfilled part of the bar;
+--- the captured original's alpha is restored on reset.
+
 local function CaptureBarTexture(bar)
     if capturedBarTextures[bar] ~= nil then
         return
@@ -760,65 +772,129 @@ local function GetBarEntries()
             entries[#entries + 1] = { bar = manaBar, unit = unit, isHealth = false }
         end
     end
+    --- ToT frames use the old-style template: bars are direct children and the
+    --- unit token follows the parent ("targettarget" / "focustarget").
+    ---@param frame any
+    ---@param fallbackUnit string
+    local function AddToTBars(frame, fallbackUnit)
+        local tot = frame ~= nil and frame.totFrame or nil
+        if tot == nil then
+            return
+        end
+        local unit = tot.unit ~= nil and tot.unit or fallbackUnit
+        if tot.HealthBar ~= nil then
+            entries[#entries + 1] = { bar = tot.HealthBar, unit = unit, isHealth = true }
+        end
+        if tot.ManaBar ~= nil then
+            entries[#entries + 1] = { bar = tot.ManaBar, unit = unit, isHealth = false }
+        end
+    end
     if PlayerFrame ~= nil then
         AddBars(PlayerFrame, "player", "PlayerFrameContent", "PlayerFrameContentMain")
     end
     if TargetFrame ~= nil then
         AddBars(TargetFrame, "target", "TargetFrameContent", "TargetFrameContentMain")
+        AddToTBars(TargetFrame, "targettarget")
     end
     if FocusFrame ~= nil then
         AddBars(FocusFrame, "focus", "TargetFrameContent", "TargetFrameContentMain")
+        AddToTBars(FocusFrame, "focustarget")
     end
     return entries
 end
 
 --- The MaskTexture Blizzard clips each bar's fill with. It is attached to the
 --- fill at OnLoad via Texture:AddMaskTexture (PlayerFrame.lua OnLoadBase,
---- TargetFrame.lua OnLoadBase), not via the XML MaskedTextures lists. Blizzard
---- swaps the fill element on its own re-texture paths and only re-attaches the
---- mask on some of them, so every apply keeps it on whatever element is
---- current - otherwise the fill renders unclipped and paints over the frame
---- art around the bar.
+--- TargetFrame.lua OnLoadBase, ToT in CreateTargetofTarget), not via the XML
+--- MaskedTextures lists. Blizzard swaps the fill element on its own re-texture
+--- paths and only re-attaches the mask on some of them, so every apply keeps
+--- it on whatever element is current - otherwise the fill renders unclipped
+--- and paints over the frame art around the bar. ToT bars carry their mask as
+--- a direct child; the target/player/focus bars on their container.
 ---@param bar any
 ---@param isHealth boolean
 ---@return any|nil
 local function GetBarMaskTexture(bar, isHealth)
     if isHealth then
+        if bar.HealthBarMask ~= nil then
+            return bar.HealthBarMask
+        end
         local container = bar.GetParent ~= nil and bar:GetParent() or nil
         return container and container.HealthBarMask or nil
     end
     return bar.ManaBarMask
 end
 
+local appliedBarFills = {} ---@type table<any, any>
+--- The per-bar runtime MaskTexture carrying the captured original atlas
+--- (created alongside the replacement fill; exists so /versaui debug can
+--- report whether the atlas clip was actually installed).
+local appliedBarAtlasMasks = {} ---@type table<any, any>
+
 --- Re-textures one bar. Texture content and tint are cosmetic writes, but
 --- RunFrameWrite still gates them per bar so a flavor where the bars report
---- protected defers them to combat end. The fill's texture CONTENT is swapped
---- in place (Texture:SetTexture) instead of replacing the fill element:
---- Blizzard's element keeps its engine-managed rect, draw layer, texel
---- snapping and OnLoad mask, so the replacement cannot drift from the
---- original art at the edges (a self-made full-bar texture sits a pixel off
---- on frames whose mask geometry is repositioned at runtime, e.g. the player
---- health bar on camelot).
+--- protected defers them to combat end. The replacement fill carries TWO
+--- masks so its visible footprint is pixel-identical to the original art:
+--- the bar's own MaskTexture (re-attached - Blizzard only re-attaches it on
+--- some of its swap paths) and a runtime MaskTexture carrying the captured
+--- original atlas, whose alpha silhouette is exactly what Blizzard drew.
+--- That second mask matters where the bar's own mask is a borrowed, oversized
+--- asset that clips nothing within the bar rect (the ToT frames use the party
+--- masks): an opaque replacement would otherwise show a few pixels past the
+--- original art's edges. AddMaskTexture requires a real MaskTexture (plain
+--- textures are rejected), and MaskTexture regions never render, so the
+--- carrier cannot ghost into the value-unfilled part of the bar.
 ---@param entry {bar: any, unit: string, isHealth: boolean}
 ---@param path string
 local function ApplyBarTextureToBar(entry, path)
     local bar = entry.bar
-    if bar.SetStatusBarTexture == nil then
+    if bar.SetStatusBarTexture == nil or bar.CreateTexture == nil then
         return
     end
     CaptureBarTexture(bar)
     RunFrameWrite(bar, function()
         suppressBarTextureHook = true
-        local fill = bar.GetStatusBarTexture ~= nil and bar:GetStatusBarTexture() or nil
-        if fill ~= nil and not IsSecret(fill) and fill.SetTexture ~= nil then
-            fill:SetTexture(path)
+        local current = bar.GetStatusBarTexture ~= nil and bar:GetStatusBarTexture() or nil
+        local captured = capturedBarTextures[bar]
+        local fill = appliedBarFills[bar]
+        if fill == nil then
+            fill = bar:CreateTexture(nil, "BACKGROUND")
+            fill:SetAllPoints(true)
+            if fill.SetTexelSnappingBias ~= nil then
+                fill:SetTexelSnappingBias(0)
+            end
+            if fill.SetSnapToPixelGrid ~= nil then
+                fill:SetSnapToPixelGrid(false)
+            end
             local mask = GetBarMaskTexture(bar, entry.isHealth)
             if mask ~= nil and fill.AddMaskTexture ~= nil then
                 fill:AddMaskTexture(mask)
             end
-        else
-            bar:SetStatusBarTexture(path)
+            if
+                captured ~= nil
+                and captured.atlas ~= nil
+                and bar.CreateMaskTexture ~= nil
+                and fill.AddMaskTexture ~= nil
+            then
+                -- AddMaskTexture requires a real MaskTexture; a plain texture
+                -- (like the captured fill element) is rejected at runtime.
+                local atlasMask = bar:CreateMaskTexture(nil, "BACKGROUND")
+                atlasMask:SetAllPoints(true)
+                atlasMask:SetAtlas(captured.atlas)
+                fill:AddMaskTexture(atlasMask)
+                appliedBarAtlasMasks[bar] = atlasMask
+            end
+            appliedBarFills[bar] = fill
         end
+        fill:SetTexture(path)
+        -- Park elements Blizzard leaves in the slot after its own re-texture
+        -- swaps (and our displaced original) so they cannot bleed into the
+        -- value-unfilled part of the bar; the reset restores the captured
+        -- original's alpha when it is re-assigned.
+        if current ~= nil and current ~= fill and not IsSecret(current) and current.SetAlpha ~= nil then
+            current:SetAlpha(0)
+        end
+        bar:SetStatusBarTexture(fill)
         if bar.SetStatusBarColor ~= nil then
             local r, g, b = GetBarColor(entry.unit, entry.isHealth)
             bar:SetStatusBarColor(r, g, b)
@@ -885,15 +961,13 @@ local function ResetBarTextureToAll()
                 suppressBarTextureHook = true
                 if captured.fill ~= nil then
                     -- Re-assign the original fill element (Blizzard may have
-                    -- swapped it in the meantime) and restore its original
-                    -- atlas content, which our in-place SetTexture overwrote.
-                    -- Its OnLoad mask and draw layer are intact, so Blizzard's
-                    -- exact look returns (and direct HealthBarTexture atlas
-                    -- writes work again).
-                    bar:SetStatusBarTexture(captured.fill)
-                    if captured.atlas ~= nil and captured.fill.SetAtlas ~= nil then
-                        captured.fill:SetAtlas(captured.atlas)
+                    -- swapped it in the meantime) with its content, alpha and
+                    -- OnLoad mask intact, so Blizzard's exact look returns
+                    -- (and direct HealthBarTexture atlas writes work again).
+                    if captured.fill.SetAlpha ~= nil then
+                        captured.fill:SetAlpha(1)
                     end
+                    bar:SetStatusBarTexture(captured.fill)
                 elseif captured.atlas ~= nil then
                     bar:SetStatusBarTexture(captured.atlas)
                 end
@@ -903,6 +977,8 @@ local function ResetBarTextureToAll()
                 suppressBarTextureHook = false
             end)
             capturedBarTextures[bar] = nil
+            appliedBarFills[bar] = nil
+            appliedBarAtlasMasks[bar] = nil
         end
     end
 end
@@ -1125,9 +1201,37 @@ local function HookBlizzardFrames()
     end)
 end
 
+--- On this client (camelot) the ToT health bar renders a few pixels tall
+--- past its slot art - present with Blizzard's own atlas, so it is a layout
+--- quirk of the borrowed party-mask ToT template, not a texture-swap
+--- artifact. The nudge trims the bar height so the top edge lines up with
+--- the slot; the mana bar hangs off the bar's bottom-left and stays put.
+--- The stock height is captured once so toggling restores it exactly.
+local capturedToTHeights = {} ---@type table<any, number>
+local TOT_BAR_NUDGE_PX = 2
+
+local function ApplyToTBarNudge()
+    local nudge = db ~= nil and db.totBarNudge == true
+    for _, frame in ipairs({ TargetFrame, FocusFrame }) do
+        local tot = frame ~= nil and frame.totFrame or nil
+        local bar = tot ~= nil and tot.HealthBar or nil
+        if bar ~= nil and bar.SetHeight ~= nil then
+            if capturedToTHeights[bar] == nil then
+                local ok, height = pcall(bar.GetHeight, bar)
+                capturedToTHeights[bar] = (ok and not IsSecret(height) and height) or nil
+            end
+            local base = capturedToTHeights[bar]
+            if base ~= nil then
+                bar:SetHeight(nudge and (base - TOT_BAR_NUDGE_PX) or base)
+            end
+        end
+    end
+end
+
 -- === Public API ===
 
----@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed", "hidePvpIcon", "hideFocusAuras" or "barTexture"
+---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed",
+---"hidePvpIcon", "hideFocusAuras", "totBarNudge" or "barTexture"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -1162,6 +1266,11 @@ function Overrides.ApplyFeature(id)
 
     if id == "hideFocusAuras" then
         ApplyFocusAurasToAll(db.hideFocusAuras == true)
+        return
+    end
+
+    if id == "totBarNudge" then
+        ApplyToTBarNudge()
         return
     end
 
@@ -1260,6 +1369,7 @@ function Overrides.ApplyAll()
     if db.barTexture.enabled then
         Overrides.ApplyFeature("barTexture")
     end
+    ApplyToTBarNudge()
 end
 
 --- Prints the runtime facts about the spell bars the override engine depends
@@ -1310,6 +1420,92 @@ function Overrides.DumpSpellBarDiagnostics()
     end
 end
 
+--- Renders a region's screen-space rect as "left,bottom w×h", secret-safe.
+---@param region any|nil
+---@return string
+local function RectString(region)
+    if region == nil or IsSecret(region) then
+        return "<secret>"
+    end
+    local okL, left = pcall(region.GetLeft, region)
+    local okB, bottom = pcall(region.GetBottom, region)
+    local okW, width = pcall(region.GetWidth, region)
+    local okH, height = pcall(region.GetHeight, region)
+    if
+        not okL
+        or not okB
+        or not okW
+        or not okH
+        or IsSecret(left)
+        or IsSecret(bottom)
+        or IsSecret(width)
+        or IsSecret(height)
+    then
+        return "<secret>"
+    end
+    return string.format("%.1f,%.1f %.1fx%.1f", left, bottom, width, height)
+end
+
+--- Prints the runtime facts about every bar-texture entry: whether the bar
+--- resolved, whether VersaUI's replacement fill is installed, what content
+--- the current fill shows, its alpha, and which sizes bar/fill/mask have.
+--- For diagnosing per-frame drift (e.g. a mask not matching its bar).
+--- Secret-safe: managed state is reported as <secret> instead of erroring.
+function Overrides.DumpBarTextureDiagnostics()
+    if db == nil or guard == nil then
+        return
+    end
+    for _, entry in ipairs(GetBarEntries()) do
+        local bar = entry.bar
+        local name = "<anon>"
+        if bar.GetName ~= nil then
+            name = tostring(bar:GetName() or bar:GetDebugName() or "<anon>")
+        end
+        local fill = appliedBarFills[bar]
+        local current = bar.GetStatusBarTexture ~= nil and bar:GetStatusBarTexture() or nil
+        local slotIsOurs = false
+        local tex = "<none>"
+        local fillAlpha = "<secret>"
+        if current ~= nil and not IsSecret(current) then
+            slotIsOurs = current == fill
+            if current.GetTexture ~= nil then
+                local ok, value = pcall(current.GetTexture, current)
+                tex = ok and tostring(value) or "<error>"
+            end
+            if current.GetAlpha ~= nil then
+                local ok, a = pcall(current.GetAlpha, current)
+                fillAlpha = ok and string.format("%.2f", a) or "<error>"
+            end
+        end
+        local mask = GetBarMaskTexture(bar, entry.isHealth)
+        local maskSize = "<none>"
+        if mask ~= nil and not IsSecret(mask) and mask.GetWidth ~= nil and mask.GetHeight ~= nil then
+            local okW, w = pcall(mask.GetWidth, mask)
+            local okH, h = pcall(mask.GetHeight, mask)
+            if okW and okH and not IsSecret(w) and not IsSecret(h) then
+                maskSize = string.format("%.1fx%.1f", w, h)
+            end
+        end
+        print(
+            string.format(
+                "|cffa335eeVersaUI:|r %s unit=%s health=%s ours=%s slotIsOurs=%s atlasMask=%s tex=%s fillAlpha=%s\n  bar@%s fill@%s mask@%s (%s)",
+                name,
+                entry.unit,
+                tostring(entry.isHealth),
+                tostring(fill ~= nil),
+                tostring(slotIsOurs),
+                tostring(appliedBarAtlasMasks[bar] ~= nil),
+                tex,
+                fillAlpha,
+                RectString(bar),
+                RectString(current),
+                RectString(mask),
+                maskSize
+            )
+        )
+    end
+end
+
 --- Wires events and post-hooks. Called once from bootstrap on ADDON_LOADED.
 ---@param overridesDB VersaUIOverridesConfig
 function Overrides.Init(overridesDB)
@@ -1327,6 +1523,7 @@ function Overrides.Init(overridesDB)
     eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
     eventFrame:RegisterEvent("UNIT_FACTION")
     eventFrame:RegisterEvent("UNIT_DISPLAYPOWER")
+    eventFrame:RegisterUnitEvent("UNIT_TARGET", "target", "focus")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
     eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
     eventFrame:RegisterUnitEvent("UNIT_AURA", "target", "focus")
@@ -1372,8 +1569,24 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.hideFocusAuras then
                 ApplyFocusAurasToAll(true)
             end
+        elseif event == "UNIT_TARGET" then
+            -- The ToT frames follow the target's/focus's target; recolor so
+            -- class-color mode and the NPC fallback track the new unit.
+            if db ~= nil and db.barTexture.enabled then
+                ApplyBarTextureToAll()
+            end
         elseif event == "UNIT_DISPLAYPOWER" then
-            if db ~= nil and db.barTexture.enabled and (unit == "player" or unit == "target" or unit == "focus") then
+            if
+                db ~= nil
+                and db.barTexture.enabled
+                and (
+                    unit == "player"
+                    or unit == "target"
+                    or unit == "focus"
+                    or unit == "targettarget"
+                    or unit == "focustarget"
+                )
+            then
                 ApplyBarTextureToAll()
             end
         end
