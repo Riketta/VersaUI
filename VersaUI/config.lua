@@ -15,6 +15,8 @@ Config.LIMITS = {
     paddingMax = 40,
     mouseSpeedMin = 1,
     mouseSpeedMax = 720,
+    colorMin = 0,
+    colorMax = 1,
 }
 
 ---@class VersaUIFrameOverrideSettings
@@ -45,10 +47,23 @@ Config.LIMITS = {
 --- Unit-frame bar texture replacement (health/mana on player, target, focus).
 --- Blizzard bakes the gradient coloring into the bar atlas (health bars get no
 --- runtime tint at all), so replacing the texture also means replicating the
---- color: UnitSelectionColor for health, PowerBarColor for mana.
+--- color: UnitSelectionColor for health, PowerBarColor for mana. The custom
+--- colors override the derived tint per bar kind on all three frames; the
+--- class-color mode takes precedence over the health override and colors each
+--- bar by its unit's class, falling back to the override (if enabled) or
+--- Blizzard's legacy health green for units without a class (NPCs).
 ---@class VersaUIBarTextureSettings
 ---@field enabled boolean
 ---@field texture string built-in id or a LibSharedMedia "statusbar" name
+---@field healthClassColorEnabled boolean
+---@field healthColorEnabled boolean
+---@field healthColorR number
+---@field healthColorG number
+---@field healthColorB number
+---@field manaColorEnabled boolean
+---@field manaColorR number
+---@field manaColorG number
+---@field manaColorB number
 
 ---@class VersaUIOverridesConfig
 ---@field tot VersaUIFrameOverrideSettings
@@ -87,7 +102,19 @@ function Config.GetDefaults()
         hideFocusAuras = false,
         barPadding = { enabled = false, paddingX = 2, paddingY = 2 },
         mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil },
-        barTexture = { enabled = false, texture = "flat" },
+        barTexture = {
+            enabled = false,
+            texture = "flat",
+            healthClassColorEnabled = false,
+            healthColorEnabled = false,
+            healthColorR = 1,
+            healthColorG = 0,
+            healthColorB = 0,
+            manaColorEnabled = false,
+            manaColorR = 0,
+            manaColorG = 0.44,
+            manaColorB = 0.87,
+        },
     }
 end
 
@@ -179,6 +206,21 @@ function Config.NormalizeBarTexture(settings)
     if type(settings.texture) ~= "string" or settings.texture == "" then
         settings.texture = "flat"
     end
+    settings.healthClassColorEnabled = (settings.healthClassColorEnabled == true)
+    settings.healthColorEnabled = (settings.healthColorEnabled == true)
+    settings.healthColorR =
+        Config.ClampValue(Config.ParseNumber(settings.healthColorR, 1), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
+    settings.healthColorG =
+        Config.ClampValue(Config.ParseNumber(settings.healthColorG, 0), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
+    settings.healthColorB =
+        Config.ClampValue(Config.ParseNumber(settings.healthColorB, 0), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
+    settings.manaColorEnabled = (settings.manaColorEnabled == true)
+    settings.manaColorR =
+        Config.ClampValue(Config.ParseNumber(settings.manaColorR, 0), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
+    settings.manaColorG =
+        Config.ClampValue(Config.ParseNumber(settings.manaColorG, 0.44), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
+    settings.manaColorB =
+        Config.ClampValue(Config.ParseNumber(settings.manaColorB, 0.87), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
     return settings
 end
 
@@ -223,7 +265,19 @@ function Config.Normalize(db)
         db.mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil }
     end
     if db.barTexture == nil then
-        db.barTexture = { enabled = false, texture = "flat" }
+        db.barTexture = {
+            enabled = false,
+            texture = "flat",
+            healthClassColorEnabled = false,
+            healthColorEnabled = false,
+            healthColorR = 1,
+            healthColorG = 0,
+            healthColorB = 0,
+            manaColorEnabled = false,
+            manaColorR = 0,
+            manaColorG = 0.44,
+            manaColorB = 0.87,
+        }
     end
 
     if db.focusTot == nil then

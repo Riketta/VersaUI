@@ -32,6 +32,15 @@ describe("config defaults", function()
         assert.equals(defaults.mouseLookSpeed.pitch, 30)
         assert.is_false(defaults.barTexture.enabled)
         assert.equals(defaults.barTexture.texture, "flat")
+        assert.is_false(defaults.barTexture.healthClassColorEnabled)
+        assert.is_false(defaults.barTexture.healthColorEnabled)
+        assert.equals(defaults.barTexture.healthColorR, 1)
+        assert.equals(defaults.barTexture.healthColorG, 0)
+        assert.equals(defaults.barTexture.healthColorB, 0)
+        assert.is_false(defaults.barTexture.manaColorEnabled)
+        assert.equals(defaults.barTexture.manaColorR, 0)
+        assert.equals(defaults.barTexture.manaColorG, 0.44)
+        assert.equals(defaults.barTexture.manaColorB, 0.87)
     end)
 end)
 
@@ -132,6 +141,63 @@ describe("config.NormalizeBarTexture", function()
         assert.is_true(settings.enabled)
         assert.equals(settings.texture, "Solid")
     end)
+
+    it("fills missing health color fields with the red default", function()
+        local settings = Config.NormalizeBarTexture({})
+        assert.is_false(settings.healthClassColorEnabled)
+        assert.is_false(settings.healthColorEnabled)
+        assert.equals(settings.healthColorR, 1)
+        assert.equals(settings.healthColorG, 0)
+        assert.equals(settings.healthColorB, 0)
+    end)
+
+    it("clamps the custom health color into 0..1 and coerces enabled", function()
+        local settings = Config.NormalizeBarTexture({
+            healthColorEnabled = "yes",
+            healthColorR = 2,
+            healthColorG = -1,
+            healthColorB = "x",
+        })
+        assert.is_false(settings.healthColorEnabled)
+        assert.equals(settings.healthColorR, 1)
+        assert.equals(settings.healthColorG, 0)
+        assert.equals(settings.healthColorB, 0)
+
+        settings = Config.NormalizeBarTexture({
+            healthColorEnabled = true,
+            healthColorR = 0.25,
+            healthColorG = 0.5,
+            healthColorB = 0.75,
+        })
+        assert.is_true(settings.healthColorEnabled)
+        assert.equals(settings.healthColorR, 0.25)
+        assert.equals(settings.healthColorG, 0.5)
+        assert.equals(settings.healthColorB, 0.75)
+    end)
+
+    it("clamps the custom mana color into 0..1 and coerces enabled", function()
+        local settings = Config.NormalizeBarTexture({
+            manaColorEnabled = "yes",
+            manaColorR = -3,
+            manaColorG = "x",
+            manaColorB = 9,
+        })
+        assert.is_false(settings.manaColorEnabled)
+        assert.equals(settings.manaColorR, 0)
+        assert.equals(settings.manaColorG, 0.44)
+        assert.equals(settings.manaColorB, 1)
+
+        settings = Config.NormalizeBarTexture({
+            manaColorEnabled = true,
+            manaColorR = 0.1,
+            manaColorG = 0.2,
+            manaColorB = 0.3,
+        })
+        assert.is_true(settings.manaColorEnabled)
+        assert.equals(settings.manaColorR, 0.1)
+        assert.equals(settings.manaColorG, 0.2)
+        assert.equals(settings.manaColorB, 0.3)
+    end)
 end)
 
 describe("config.Normalize", function()
@@ -151,6 +217,11 @@ describe("config.Normalize", function()
         assert.is_false(db.mouseLookSpeed.enabled)
         assert.is_false(db.barTexture.enabled)
         assert.equals(db.barTexture.texture, "flat")
+        assert.is_false(db.barTexture.healthClassColorEnabled)
+        assert.is_false(db.barTexture.healthColorEnabled)
+        assert.equals(db.barTexture.healthColorR, 1)
+        assert.is_false(db.barTexture.manaColorEnabled)
+        assert.equals(db.barTexture.manaColorB, 0.87)
     end)
 
     it("coerces saved values strictly to true booleans", function()
@@ -163,6 +234,19 @@ describe("config.Normalize", function()
         assert.is_true(db.hideFocusAuras)
         db = Config.Normalize({ hideFocusAuras = "yes" })
         assert.is_false(db.hideFocusAuras)
+
+        db = Config.Normalize({ barTexture = { enabled = true, healthColorEnabled = true, healthColorR = 0.1 } })
+        assert.is_true(db.barTexture.healthColorEnabled)
+        assert.equals(db.barTexture.healthColorR, 0.1)
+
+        db = Config.Normalize({ barTexture = { manaColorEnabled = true } })
+        assert.is_true(db.barTexture.manaColorEnabled)
+        assert.equals(db.barTexture.manaColorR, 0)
+
+        db = Config.Normalize({ barTexture = { healthClassColorEnabled = "yes" } })
+        assert.is_false(db.barTexture.healthClassColorEnabled)
+        db = Config.Normalize({ barTexture = { healthClassColorEnabled = true } })
+        assert.is_true(db.barTexture.healthClassColorEnabled)
     end)
 
     it("normalizes saved level overrides like any frame override", function()

@@ -154,11 +154,113 @@ local function CreateToggleRow(title, y)
     return checkBox
 end
 
+--- One custom-color row: an enable checkbox plus a swatch button that opens
+--- Blizzard's ColorPickerFrame. Reads/writes <prefix>Enabled/R/G/B on the
+--- settings table (prefix "healthColor" or "manaColor").
+---@param label string
+---@param settings any
+---@param prefix string
+---@param y number
+local function CreateColorRow(label, settings, prefix, y)
+    local apply = VersaUI.overrides.ApplyFeature
+    local enabledKey = prefix .. "Enabled"
+
+    local checkBox = CreateCheckBox(frame, label)
+    checkBox:SetPoint("TOPLEFT", 16, y)
+    checkBox:SetChecked(settings[enabledKey] == true)
+    checkBox:SetScript("OnClick", function(self)
+        settings[enabledKey] = (self:GetChecked() == true)
+        apply("barTexture")
+    end)
+
+    -- Color swatch: a button whose backing/fill textures preview the stored
+    -- color; clicking it opens Blizzard's ColorPickerFrame.
+    local swatch = CreateFrame("Button", nil, frame)
+    swatch:SetSize(56, 20)
+    swatch:SetPoint("TOPLEFT", 250, y + 2)
+    local swatchBorder = swatch:CreateTexture(nil, "BORDER")
+    swatchBorder:SetColorTexture(0, 0, 0)
+    swatchBorder:SetAllPoints(true)
+    local swatchFill = swatch:CreateTexture(nil, "OVERLAY")
+    swatchFill:SetColorTexture(1, 1, 1)
+    swatchFill:SetPoint("TOPLEFT", swatch, "TOPLEFT", 2, -2)
+    swatchFill:SetPoint("BOTTOMRIGHT", swatch, "BOTTOMRIGHT", -2, 2)
+
+    local function UpdateSwatch()
+        swatchFill:SetVertexColor(settings[prefix .. "R"], settings[prefix .. "G"], settings[prefix .. "B"])
+    end
+    UpdateSwatch()
+
+    swatch:SetScript("OnClick", function()
+        if ColorPickerFrame == nil then
+            return
+        end
+
+        local function ApplyColor()
+            local r, g, b = ColorPickerFrame:GetColorRGB()
+            settings[prefix .. "R"], settings[prefix .. "G"], settings[prefix .. "B"] = r, g, b
+            -- Picking a color reads as intent to use it; the checkbox turns it off again.
+            settings[enabledKey] = true
+            checkBox:SetChecked(true)
+            UpdateSwatch()
+            apply("barTexture")
+        end
+
+        local function CancelColor(previous)
+            local extra = ColorPickerFrame.GetExtraInfo ~= nil and ColorPickerFrame:GetExtraInfo() or nil
+            local wasEnabled = nil
+            if type(extra) == "table" then
+                wasEnabled = extra[enabledKey]
+            elseif type(previous) == "table" then
+                wasEnabled = previous[enabledKey]
+            end
+            settings[prefix .. "R"] = previous.r
+            settings[prefix .. "G"] = previous.g
+            settings[prefix .. "B"] = previous.b
+            settings[enabledKey] = (wasEnabled == true)
+            checkBox:SetChecked(wasEnabled == true)
+            UpdateSwatch()
+            apply("barTexture")
+        end
+
+        -- This client's picker is the modern Mainline frame: it has no
+        -- SetColorRGB; SetupColorPickerAndShow drives everything (it rebuilds
+        -- previousValues itself, so the enabled flag rides in extraInfo).
+        -- swatchFunc fires live on every color change and once more on Okay.
+        if ColorPickerFrame.SetupColorPickerAndShow ~= nil then
+            ColorPickerFrame:SetupColorPickerAndShow({
+                swatchFunc = ApplyColor,
+                cancelFunc = CancelColor,
+                hasOpacity = false,
+                r = settings[prefix .. "R"],
+                g = settings[prefix .. "G"],
+                b = settings[prefix .. "B"],
+                extraInfo = { [enabledKey] = settings[enabledKey] },
+                swatch = swatchFill,
+            })
+        elseif ColorPickerFrame.SetColorRGB ~= nil then
+            -- Legacy field-based frame fallback.
+            ColorPickerFrame.hasOpacity = false
+            ColorPickerFrame.opacityFunc = nil
+            ColorPickerFrame.func = ApplyColor
+            ColorPickerFrame.cancelFunc = CancelColor
+            ColorPickerFrame.previousValues = {
+                r = settings[prefix .. "R"],
+                g = settings[prefix .. "G"],
+                b = settings[prefix .. "B"],
+                [enabledKey] = settings[enabledKey],
+            }
+            ColorPickerFrame:SetColorRGB(settings[prefix .. "R"], settings[prefix .. "G"], settings[prefix .. "B"])
+            ColorPickerFrame:Show()
+        end
+    end)
+end
+
 local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 590 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 680 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -336,6 +438,21 @@ local function CreateWindow()
         end
     end)
     UIDropDownMenu_SetSelectedValue(barTextureDropdown, barTexture.texture)
+
+    y = y - 40
+    local classColorCheck = CreateCheckBox(frame, "Use unit class color (health)")
+    classColorCheck:SetPoint("TOPLEFT", 16, y)
+    classColorCheck:SetChecked(barTexture.healthClassColorEnabled == true)
+    classColorCheck:SetScript("OnClick", function(self)
+        barTexture.healthClassColorEnabled = (self:GetChecked() == true)
+        apply("barTexture")
+    end)
+
+    y = y - 40
+    CreateColorRow("Custom health color", barTexture, "healthColor", y)
+
+    y = y - 40
+    CreateColorRow("Custom mana color", barTexture, "manaColor", y)
 
     local notes = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     notes:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 12)

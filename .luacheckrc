@@ -29,6 +29,7 @@ files["VersaUI"] = {
 		"C_CVar",
 		"C_EditMode",
 		"C_Timer",
+		"ColorPickerFrame",
 		"issecretvalue",
 		"EditModeManagerFrame",
 		"EventRegistry",

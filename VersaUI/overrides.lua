@@ -37,9 +37,10 @@ Overrides.FEATURES = { "tot", "focusTot", "targetCastBar", "focusCastBar", "targ
 ---@field yaw number
 ---@field pitch number
 
---- One captured pre-VersaUI bar appearance (atlas + tint), so disabling the
---- bar-texture override restores exactly what Blizzard had.
+--- One captured pre-VersaUI bar appearance (fill element + atlas + tint), so
+--- disabling the bar-texture override restores exactly what Blizzard had.
 ---@class VersaUICapturedBarTexture
+---@field fill any|nil the original fill texture element; reset re-assigns it, keeping its OnLoad mask
 ---@field atlas string|nil
 ---@field r number|nil
 ---@field g number|nil
@@ -547,8 +548,22 @@ local LSM_MEDIA_TYPE = "statusbar"
 --- Guaranteed built-ins; everything else comes from LibSharedMedia when
 --- Details!, Plater or SharedMedia are installed (all load before VersaUI,
 --- so their registered media is already in the library when we read it).
+--- The Versa* entries are the textures from VersaMoveAnything, shipped in
+--- VersaUI/Textures (extensionless paths: the engine resolves .tga/.blp).
 local BUILTIN_BAR_TEXTURES = {
     { id = "flat", title = "Flat (solid)", path = "Interface\\Buttons\\WHITE8X8" },
+    {
+        id = "versaGradient",
+        title = "Versa (gradient)",
+        path = "Interface\\AddOns\\VersaUI\\Textures\\versatexture_gradient",
+    },
+    { id = "versaTexture", title = "Versa", path = "Interface\\AddOns\\VersaUI\\Textures\\versatexture" },
+    {
+        id = "versaUnitStatus",
+        title = "Versa (unit status)",
+        path = "Interface\\AddOns\\VersaUI\\Textures\\versatexture_unitstatus",
+    },
+    { id = "versaPlate", title = "Versa (plate)", path = "Interface\\AddOns\\VersaUI\\Textures\\platetexture" },
 }
 
 --- Nil-safe LibSharedMedia accessor. VersaUI must work with none of the
@@ -619,12 +634,31 @@ function Overrides.GetBarTextureOptions()
     return options
 end
 
+--- RAID_CLASS_COLORS lookup for any player unit; nil for NPCs and other
+--- units without a class.
+---@param unit string
+---@return {r: number, g: number, b: number}|nil
+local function GetUnitClassColorTable(unit)
+    if UnitClass == nil or RAID_CLASS_COLORS == nil then
+        return nil
+    end
+    local _, classFileName = UnitClass(unit)
+    local color = classFileName ~= nil and RAID_CLASS_COLORS[classFileName] or nil
+    if color ~= nil and color.r ~= nil then
+        return color
+    end
+    return nil
+end
+
 --- Blizzard's own coloring semantics, replicated for the flat replacement:
 --- these bars are all lockColor=true (Blizzard never tints them at runtime),
 --- the gradient color is baked into the atlas, so the flat swap has to set
---- the color itself. Health: class color for the player herself -
---- UnitSelectionColor("player") comes back white-ish on this client - and
---- the reaction color for everything else. Mana: the power-type color.
+--- the color itself. Health, in priority order: the unit's class color when
+--- the class-color mode is on (units without a class fall through), then the
+--- user's override color when enabled, then - for the automatic mode - class
+--- color for the player herself (UnitSelectionColor("player") comes back
+--- white-ish on this client) and the reaction color for everything else.
+--- Mana: the user's custom color when enabled, else the power-type color.
 ---@param unit string
 ---@param isHealth boolean
 ---@return number r
@@ -632,10 +666,23 @@ end
 ---@return number b
 local function GetBarColor(unit, isHealth)
     if isHealth then
+        if db ~= nil and db.barTexture.healthClassColorEnabled then
+            local classColor = GetUnitClassColorTable(unit)
+            if classColor ~= nil then
+                return classColor.r, classColor.g, classColor.b
+            end
+            if db.barTexture.healthColorEnabled then
+                return db.barTexture.healthColorR, db.barTexture.healthColorG, db.barTexture.healthColorB
+            end
+            -- Blizzard's legacy health green (UnitFrameHealthBar_Update).
+            return 0, 1, 0
+        end
+        if db ~= nil and db.barTexture.healthColorEnabled then
+            return db.barTexture.healthColorR, db.barTexture.healthColorG, db.barTexture.healthColorB
+        end
         if UnitIsUnit ~= nil and UnitIsUnit(unit, "player") then
-            local _, classFileName = UnitClass(unit)
-            local classColor = classFileName ~= nil and RAID_CLASS_COLORS ~= nil and RAID_CLASS_COLORS[classFileName]
-            if classColor ~= nil and classColor.r ~= nil then
+            local classColor = GetUnitClassColorTable(unit)
+            if classColor ~= nil then
                 return classColor.r, classColor.g, classColor.b
             end
         end
@@ -643,6 +690,9 @@ local function GetBarColor(unit, isHealth)
             return UnitSelectionColor(unit)
         end
         return 1, 1, 1
+    end
+    if db ~= nil and db.barTexture.manaColorEnabled then
+        return db.barTexture.manaColorR, db.barTexture.manaColorG, db.barTexture.manaColorB
     end
     local powerType, powerToken = UnitPowerType(unit)
     local color = nil
@@ -666,10 +716,15 @@ local function CaptureBarTexture(bar)
     end
     local captured = {} ---@type VersaUICapturedBarTexture
     local texture = bar.GetStatusBarTexture ~= nil and bar:GetStatusBarTexture() or nil
-    if texture ~= nil and texture.GetAtlas ~= nil then
-        local atlas = texture:GetAtlas()
-        if not IsSecret(atlas) then
-            captured.atlas = atlas
+    if texture ~= nil and not IsSecret(texture) then
+        -- Keep the element itself: re-assigning it on disable restores the
+        -- fill with the mask Blizzard added at OnLoad still attached.
+        captured.fill = texture
+        if texture.GetAtlas ~= nil then
+            local atlas = texture:GetAtlas()
+            if not IsSecret(atlas) then
+                captured.atlas = atlas
+            end
         end
     end
     if bar.GetStatusBarColor ~= nil then
@@ -697,8 +752,12 @@ local function GetBarEntries()
         if main.HealthBarsContainer ~= nil and main.HealthBarsContainer.HealthBar ~= nil then
             entries[#entries + 1] = { bar = main.HealthBarsContainer.HealthBar, unit = unit, isHealth = true }
         end
-        if main.ManaBarArea ~= nil and main.ManaBarArea.ManaBar ~= nil then
-            entries[#entries + 1] = { bar = main.ManaBarArea.ManaBar, unit = unit, isHealth = false }
+        -- The mana bar hangs off ManaBarArea only on the player frame; on the
+        -- TargetFrameTemplate (target/focus) it sits directly on the content
+        -- main (TargetFrame.lua:OnLoad reads targetFrameContentMain.ManaBar).
+        local manaBar = main.ManaBarArea ~= nil and main.ManaBarArea.ManaBar or main.ManaBar
+        if manaBar ~= nil then
+            entries[#entries + 1] = { bar = manaBar, unit = unit, isHealth = false }
         end
     end
     if PlayerFrame ~= nil then
@@ -713,9 +772,33 @@ local function GetBarEntries()
     return entries
 end
 
+--- The MaskTexture Blizzard clips each bar's fill with. It is attached to the
+--- fill at OnLoad via Texture:AddMaskTexture (PlayerFrame.lua OnLoadBase,
+--- TargetFrame.lua OnLoadBase), not via the XML MaskedTextures lists. Blizzard
+--- swaps the fill element on its own re-texture paths and only re-attaches the
+--- mask on some of them, so every apply keeps it on whatever element is
+--- current - otherwise the fill renders unclipped and paints over the frame
+--- art around the bar.
+---@param bar any
+---@param isHealth boolean
+---@return any|nil
+local function GetBarMaskTexture(bar, isHealth)
+    if isHealth then
+        local container = bar.GetParent ~= nil and bar:GetParent() or nil
+        return container and container.HealthBarMask or nil
+    end
+    return bar.ManaBarMask
+end
+
 --- Re-textures one bar. Texture content and tint are cosmetic writes, but
 --- RunFrameWrite still gates them per bar so a flavor where the bars report
---- protected defers them to combat end.
+--- protected defers them to combat end. The fill's texture CONTENT is swapped
+--- in place (Texture:SetTexture) instead of replacing the fill element:
+--- Blizzard's element keeps its engine-managed rect, draw layer, texel
+--- snapping and OnLoad mask, so the replacement cannot drift from the
+--- original art at the edges (a self-made full-bar texture sits a pixel off
+--- on frames whose mask geometry is repositioned at runtime, e.g. the player
+--- health bar on camelot).
 ---@param entry {bar: any, unit: string, isHealth: boolean}
 ---@param path string
 local function ApplyBarTextureToBar(entry, path)
@@ -726,7 +809,16 @@ local function ApplyBarTextureToBar(entry, path)
     CaptureBarTexture(bar)
     RunFrameWrite(bar, function()
         suppressBarTextureHook = true
-        bar:SetStatusBarTexture(path)
+        local fill = bar.GetStatusBarTexture ~= nil and bar:GetStatusBarTexture() or nil
+        if fill ~= nil and not IsSecret(fill) and fill.SetTexture ~= nil then
+            fill:SetTexture(path)
+            local mask = GetBarMaskTexture(bar, entry.isHealth)
+            if mask ~= nil and fill.AddMaskTexture ~= nil then
+                fill:AddMaskTexture(mask)
+            end
+        else
+            bar:SetStatusBarTexture(path)
+        end
         if bar.SetStatusBarColor ~= nil then
             local r, g, b = GetBarColor(entry.unit, entry.isHealth)
             bar:SetStatusBarColor(r, g, b)
@@ -791,7 +883,18 @@ local function ResetBarTextureToAll()
         if captured ~= nil and bar.SetStatusBarTexture ~= nil then
             RunFrameWrite(bar, function()
                 suppressBarTextureHook = true
-                if captured.atlas ~= nil then
+                if captured.fill ~= nil then
+                    -- Re-assign the original fill element (Blizzard may have
+                    -- swapped it in the meantime) and restore its original
+                    -- atlas content, which our in-place SetTexture overwrote.
+                    -- Its OnLoad mask and draw layer are intact, so Blizzard's
+                    -- exact look returns (and direct HealthBarTexture atlas
+                    -- writes work again).
+                    bar:SetStatusBarTexture(captured.fill)
+                    if captured.atlas ~= nil and captured.fill.SetAtlas ~= nil then
+                        captured.fill:SetAtlas(captured.atlas)
+                    end
+                elseif captured.atlas ~= nil then
                     bar:SetStatusBarTexture(captured.atlas)
                 end
                 if captured.r ~= nil and bar.SetStatusBarColor ~= nil then
