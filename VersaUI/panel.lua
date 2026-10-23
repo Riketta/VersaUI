@@ -260,7 +260,7 @@ local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 710 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 740 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -328,6 +328,14 @@ local function CreateWindow()
     totNudge:SetScript("OnClick", function(self)
         db.totBarNudge = (self:GetChecked() == true)
         apply("totBarNudge")
+    end)
+    y = y - 30
+
+    local hideHitIndicator = CreateToggleRow("Hide player combat text on portrait", y)
+    hideHitIndicator:SetChecked(db.hideHitIndicator == true)
+    hideHitIndicator:SetScript("OnClick", function(self)
+        db.hideHitIndicator = (self:GetChecked() == true)
+        apply("hideHitIndicator")
     end)
     y = y - 44
 

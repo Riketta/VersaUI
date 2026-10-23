@@ -541,6 +541,22 @@ local function ApplyFocusAurasToAll(hidden)
     end
 end
 
+--- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard's
+--- combat-feedback system drives the HitText FontString INSIDE this frame
+--- (CombatFeedback_OnCombatEvent Show()s and re-alpha-fades it on every
+--- UNIT_COMBAT event), but it never writes the frame's own alpha - so a
+--- frame-level SetAlpha(0) hides the numbers without fighting the feedback
+--- animation, and the FontString's IsVisible-driven OnUpdate stays harmless.
+---@param hidden boolean
+local function ApplyHitIndicator(hidden)
+    local content = PlayerFrame and PlayerFrame.PlayerFrameContent
+    local main = content and content.PlayerFrameContentMain
+    local indicator = main and main.HitIndicator or nil
+    if indicator ~= nil and indicator.SetAlpha ~= nil then
+        indicator:SetAlpha(hidden and 0 or 1)
+    end
+end
+
 -- === Unit-frame bar textures (health/mana replacement) ===
 
 local LSM_MEDIA_TYPE = "statusbar"
@@ -1231,7 +1247,7 @@ end
 -- === Public API ===
 
 ---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed",
----"hidePvpIcon", "hideFocusAuras", "totBarNudge" or "barTexture"
+---"hidePvpIcon", "hideFocusAuras", "hideHitIndicator", "totBarNudge" or "barTexture"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -1266,6 +1282,11 @@ function Overrides.ApplyFeature(id)
 
     if id == "hideFocusAuras" then
         ApplyFocusAurasToAll(db.hideFocusAuras == true)
+        return
+    end
+
+    if id == "hideHitIndicator" then
+        ApplyHitIndicator(db.hideHitIndicator == true)
         return
     end
 
@@ -1359,6 +1380,9 @@ function Overrides.ApplyAll()
     end
     if db.hideFocusAuras then
         ApplyFocusAurasToAll(true)
+    end
+    if db.hideHitIndicator then
+        ApplyHitIndicator(true)
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")
@@ -1556,6 +1580,9 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.hideFocusAuras then
                 ApplyFocusAurasToAll(true)
             end
+            if db ~= nil and db.hideHitIndicator then
+                ApplyHitIndicator(true)
+            end
             if db ~= nil and db.barTexture.enabled then
                 ApplyBarTextureToAll()
             end
@@ -1568,6 +1595,9 @@ function Overrides.Init(overridesDB)
             end
             if db ~= nil and db.hideFocusAuras then
                 ApplyFocusAurasToAll(true)
+            end
+            if db ~= nil and db.hideHitIndicator then
+                ApplyHitIndicator(true)
             end
         elseif event == "UNIT_TARGET" then
             -- The ToT frames follow the target's/focus's target; recolor so
