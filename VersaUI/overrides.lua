@@ -476,9 +476,10 @@ end
 
 --- Regions rendering the PvP badge: the contextual PvpBackgroundIcon on the
 --- TargetFrameTemplate family (the visible badge on camelot, an empty
---- background plate on retail, where the sibling PvpIcon carries the badge)
---- and the player frame's main content on camelot. Nil-guarded per element,
---- so flavors without a member simply contribute nothing.
+--- background plate on retail, where the sibling PvpIcon carries the badge),
+--- the player frame's main content on camelot, and the player's PvP-flag
+--- countdown text next to the badge. Nil-guarded per element, so flavors
+--- without a member simply contribute nothing.
 ---@return any[]
 local function GetPvpIconRegions()
     local regions = {}
@@ -499,14 +500,20 @@ local function GetPvpIconRegions()
     if playerMain ~= nil and playerMain.PvpBackgroundIcon ~= nil then
         regions[#regions + 1] = playerMain.PvpBackgroundIcon
     end
+    local timerText = playerContent ~= nil and playerContent.PvpTimerText or nil
+    if timerText ~= nil then
+        regions[#regions + 1] = timerText
+    end
     return regions
 end
 
 --- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard drives
---- these textures purely through SetShown/SetTextureOrAtlas
---- (UnitFrameUtil.UpdateUnitPvPIndicator) and never writes their alpha, so
---- SetAlpha(0) survives every PvP-indicator update while keeping IsShown()
---- true for Blizzard's own checks (combo point layout, PvP update sound).
+--- these textures/text through SetShown/SetTextureOrAtlas (the badge via
+--- UnitFrameUtil.UpdateUnitPvPIndicator, the countdown via plain Show() in
+--- PlayerFrame's update paths) and never writes their alpha, so SetAlpha(0)
+--- survives every update - including the countdown's Show() - while keeping
+--- IsShown() true for Blizzard's own checks (combo point layout, PvP update
+--- sound).
 ---@param hidden boolean
 local function ApplyPvpIconToAll(hidden)
     local alpha = hidden and 0 or 1
