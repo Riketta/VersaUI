@@ -347,19 +347,19 @@ local function CreateWindow()
     end)
     y = y - 30
 
-    local hideRestLoop = CreateToggleRow("Hide resting animation", y)
-    hideRestLoop:SetChecked(db.hideRestLoop == true)
-    hideRestLoop:SetScript("OnClick", function(self)
-        db.hideRestLoop = (self:GetChecked() == true)
-        apply("hideRestLoop")
-    end)
-    y = y - 30
-
     local hideRoleIcon = CreateToggleRow("Hide player role icon", y)
     hideRoleIcon:SetChecked(db.hideRoleIcon == true)
     hideRoleIcon:SetScript("OnClick", function(self)
         db.hideRoleIcon = (self:GetChecked() == true)
         apply("hideRoleIcon")
+    end)
+    y = y - 30
+
+    local hideRestLoop = CreateToggleRow("Hide resting animation", y)
+    hideRestLoop:SetChecked(db.hideRestLoop == true)
+    hideRestLoop:SetScript("OnClick", function(self)
+        db.hideRestLoop = (self:GetChecked() == true)
+        apply("hideRestLoop")
     end)
     y = y - 44
 
