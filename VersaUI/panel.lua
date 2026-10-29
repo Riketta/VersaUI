@@ -260,7 +260,7 @@ local function CreateWindow()
     frame = CreateFrame("Frame", "VersaUIOverridesPanel", UIParent, "BasicFrameTemplateWithInset")
     -- Height derives from the feature row count (36px per row) plus the fixed
     -- toggles/padding/mouse/notes sections, so adding rows can't overflow again.
-    frame:SetSize(520, 740 + #FRAME_FEATURES * 36)
+    frame:SetSize(520, 830 + #FRAME_FEATURES * 36)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -331,11 +331,35 @@ local function CreateWindow()
     end)
     y = y - 30
 
-    local hideHitIndicator = CreateToggleRow("Hide player combat text on portrait", y)
-    hideHitIndicator:SetChecked(db.hideHitIndicator == true)
-    hideHitIndicator:SetScript("OnClick", function(self)
+    local hideCombatText = CreateToggleRow("Hide combat text on portraits", y)
+    hideCombatText:SetChecked(db.hideHitIndicator == true)
+    hideCombatText:SetScript("OnClick", function(self)
         db.hideHitIndicator = (self:GetChecked() == true)
         apply("hideHitIndicator")
+    end)
+    y = y - 30
+
+    local hideGroupIndicator = CreateToggleRow("Hide group indicator", y)
+    hideGroupIndicator:SetChecked(db.hideGroupIndicator == true)
+    hideGroupIndicator:SetScript("OnClick", function(self)
+        db.hideGroupIndicator = (self:GetChecked() == true)
+        apply("hideGroupIndicator")
+    end)
+    y = y - 30
+
+    local hideRestLoop = CreateToggleRow("Hide resting animation", y)
+    hideRestLoop:SetChecked(db.hideRestLoop == true)
+    hideRestLoop:SetScript("OnClick", function(self)
+        db.hideRestLoop = (self:GetChecked() == true)
+        apply("hideRestLoop")
+    end)
+    y = y - 30
+
+    local hideRoleIcon = CreateToggleRow("Hide player role icon", y)
+    hideRoleIcon:SetChecked(db.hideRoleIcon == true)
+    hideRoleIcon:SetScript("OnClick", function(self)
+        db.hideRoleIcon = (self:GetChecked() == true)
+        apply("hideRoleIcon")
     end)
     y = y - 44
 

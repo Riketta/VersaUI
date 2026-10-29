@@ -81,6 +81,9 @@ Config.LIMITS = {
 ---@field hidePvpIcon boolean
 ---@field hideFocusAuras boolean
 ---@field hideHitIndicator boolean
+---@field hideGroupIndicator boolean
+---@field hideRestLoop boolean
+---@field hideRoleIcon boolean
 ---@field barTexture VersaUIBarTextureSettings
 
 ---@return VersaUIFrameOverrideSettings
@@ -103,6 +106,9 @@ function Config.GetDefaults()
         hidePvpIcon = false,
         hideFocusAuras = false,
         hideHitIndicator = false,
+        hideGroupIndicator = false,
+        hideRestLoop = false,
+        hideRoleIcon = false,
         totBarNudge = true,
         barPadding = { enabled = false, paddingX = 2, paddingY = 2 },
         mouseLookSpeed = { enabled = false, yaw = 60, pitch = 30, originalYaw = nil, originalPitch = nil },
@@ -265,6 +271,15 @@ function Config.Normalize(db)
     if db.hideHitIndicator == nil then
         db.hideHitIndicator = false
     end
+    if db.hideGroupIndicator == nil then
+        db.hideGroupIndicator = false
+    end
+    if db.hideRestLoop == nil then
+        db.hideRestLoop = false
+    end
+    if db.hideRoleIcon == nil then
+        db.hideRoleIcon = false
+    end
     if db.totBarNudge == nil then
         db.totBarNudge = true
     end
@@ -305,6 +320,9 @@ function Config.Normalize(db)
     db.hidePvpIcon = (db.hidePvpIcon == true)
     db.hideFocusAuras = (db.hideFocusAuras == true)
     db.hideHitIndicator = (db.hideHitIndicator == true)
+    db.hideGroupIndicator = (db.hideGroupIndicator == true)
+    db.hideRestLoop = (db.hideRestLoop == true)
+    db.hideRoleIcon = (db.hideRoleIcon == true)
     db.totBarNudge = (db.totBarNudge == true)
     Config.NormalizePaddingOverride(db.barPadding)
     Config.NormalizeMouseLookSpeed(db.mouseLookSpeed)

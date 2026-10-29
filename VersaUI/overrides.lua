@@ -549,11 +549,17 @@ local function ApplyFocusAurasToAll(hidden)
 end
 
 --- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard's
---- combat-feedback system drives the HitText FontString INSIDE this frame
---- (CombatFeedback_OnCombatEvent Show()s and re-alpha-fades it on every
---- UNIT_COMBAT event), but it never writes the frame's own alpha - so a
---- frame-level SetAlpha(0) hides the numbers without fighting the feedback
---- animation, and the FontString's IsVisible-driven OnUpdate stays harmless.
+--- combat-feedback system drives the HitText FontString INSIDE the player's
+--- indicator frame (CombatFeedback_OnCombatEvent Show()s and re-alpha-fades
+--- it on every UNIT_COMBAT event), but it never writes the frame's own alpha
+--- - so a frame-level SetAlpha(0) hides the numbers without fighting the
+--- feedback animation, and the FontString's IsVisible-driven OnUpdate stays
+--- harmless. The pet portrait has no such wrapper on this client:
+--- PetHitIndicator IS the feedback FontString (Mainline PetFrame.xml nests it
+--- in anonymous containers next to PetName, so alpha on a parent would hide
+--- the name too). Blizzard rewrites its alpha every CombatFeedback_OnUpdate
+--- tick, which the SetAlpha post-hook in HookBlizzardFrames chases back to 0;
+--- this direct write covers the idle state and the disable path.
 ---@param hidden boolean
 local function ApplyHitIndicator(hidden)
     local content = PlayerFrame and PlayerFrame.PlayerFrameContent
@@ -561,6 +567,62 @@ local function ApplyHitIndicator(hidden)
     local indicator = main and main.HitIndicator or nil
     if indicator ~= nil and indicator.SetAlpha ~= nil then
         indicator:SetAlpha(hidden and 0 or 1)
+    end
+    local petIndicator = GlobalFrame("PetHitIndicator")
+    if petIndicator ~= nil and petIndicator.SetAlpha ~= nil then
+        petIndicator:SetAlpha(hidden and 0 or 1)
+    end
+end
+
+--- Resolves a named child of PlayerFrameContentContextual. The group
+--- indicator, resting loop and role icon all live in that slot container
+--- (Mainline PlayerFrame.xml); nil-guarded for flavors without it.
+---@param key string
+---@return any|nil
+local function GetPlayerContextualElement(key)
+    local content = PlayerFrame and PlayerFrame.PlayerFrameContent
+    local contextual = content and content.PlayerFrameContentContextual
+    return contextual and contextual[key] or nil
+end
+
+--- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard's
+--- group-indicator update path writes the text, the frame width and
+--- Show/Hide - never alpha (the .7 on the inner FontString comes from the
+--- XML attribute) - so SetAlpha(0) survives every group change. The frame
+--- has no global name on this client (parentKey only; only the inner text
+--- is named), so it is resolved through the contextual container.
+---@param hidden boolean
+local function ApplyGroupIndicator(hidden)
+    local indicator = GetPlayerContextualElement("GroupIndicator")
+    if indicator ~= nil and indicator.SetAlpha ~= nil then
+        indicator:SetAlpha(hidden and 0 or 1)
+    end
+end
+
+--- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard's
+--- PlayerFrame_UpdatePlayerRestLoop only drives Show/Hide and plays/stops
+--- the animation - a FlipBook over the RestTexture atlas frames carrying no
+--- Alpha animator - so the frame's own alpha is never written and SetAlpha(0)
+--- hides the resting loop while keeping the IsShown() semantics Blizzard's
+--- update paths expect.
+---@param hidden boolean
+local function ApplyRestLoop(hidden)
+    local restLoop = GetPlayerContextualElement("PlayerRestLoop")
+    if restLoop ~= nil and restLoop.SetAlpha ~= nil then
+        restLoop:SetAlpha(hidden and 0 or 1)
+    end
+end
+
+--- Cosmetic-only (SetAlpha), so this is safe during combat. Blizzard's
+--- UnitFrameUtil.UpdateUnitFrameRoleIcon only writes the texture's atlas,
+--- shown state and size (never its alpha), and the camelot flavor gates the
+--- icon off in instances anyway (PlayerFrame_ShowRoleIconInsideInstances
+--- returns false), so SetAlpha(0) sticks across every role update.
+---@param hidden boolean
+local function ApplyRoleIcon(hidden)
+    local roleIcon = GetPlayerContextualElement("RoleIcon")
+    if roleIcon ~= nil and roleIcon.SetAlpha ~= nil then
+        roleIcon:SetAlpha(hidden and 0 or 1)
     end
 end
 
@@ -1222,6 +1284,18 @@ local function HookBlizzardFrames()
     HookFrameMethod(FocusFrame, "UpdateHealthBarVisuals", function()
         OnHealthBarVisualsChanged("focus")
     end)
+    -- PetHitIndicator IS the combat-feedback FontString: CombatFeedback_OnUpdate
+    -- rewrites its alpha every tick during a fade, so chase each write back to 0.
+    -- The equality check also terminates the re-entry our own write causes.
+    local petIndicator = GlobalFrame("PetHitIndicator")
+    HookFrameMethod(petIndicator, "SetAlpha", function()
+        if db == nil or not db.hideHitIndicator then
+            return
+        end
+        if petIndicator.GetAlpha ~= nil and petIndicator:GetAlpha() ~= 0 then
+            petIndicator:SetAlpha(0)
+        end
+    end)
 end
 
 --- On this client (camelot) the ToT health bar renders a few pixels tall
@@ -1254,7 +1328,8 @@ end
 -- === Public API ===
 
 ---@param id string one of Overrides.FEATURES, "petAurasOnTop", "barPadding", "mouseLookSpeed",
----"hidePvpIcon", "hideFocusAuras", "hideHitIndicator", "totBarNudge" or "barTexture"
+---"hidePvpIcon", "hideFocusAuras", "hideHitIndicator", "hideGroupIndicator", "hideRestLoop",
+---"hideRoleIcon", "totBarNudge" or "barTexture"
 function Overrides.ApplyFeature(id)
     if db == nil or guard == nil then
         return
@@ -1294,6 +1369,21 @@ function Overrides.ApplyFeature(id)
 
     if id == "hideHitIndicator" then
         ApplyHitIndicator(db.hideHitIndicator == true)
+        return
+    end
+
+    if id == "hideGroupIndicator" then
+        ApplyGroupIndicator(db.hideGroupIndicator == true)
+        return
+    end
+
+    if id == "hideRestLoop" then
+        ApplyRestLoop(db.hideRestLoop == true)
+        return
+    end
+
+    if id == "hideRoleIcon" then
+        ApplyRoleIcon(db.hideRoleIcon == true)
         return
     end
 
@@ -1390,6 +1480,15 @@ function Overrides.ApplyAll()
     end
     if db.hideHitIndicator then
         ApplyHitIndicator(true)
+    end
+    if db.hideGroupIndicator then
+        ApplyGroupIndicator(true)
+    end
+    if db.hideRestLoop then
+        ApplyRestLoop(true)
+    end
+    if db.hideRoleIcon then
+        ApplyRoleIcon(true)
     end
     if db.barPadding.enabled then
         Overrides.ApplyFeature("barPadding")
@@ -1590,6 +1689,15 @@ function Overrides.Init(overridesDB)
             if db ~= nil and db.hideHitIndicator then
                 ApplyHitIndicator(true)
             end
+            if db ~= nil and db.hideGroupIndicator then
+                ApplyGroupIndicator(true)
+            end
+            if db ~= nil and db.hideRestLoop then
+                ApplyRestLoop(true)
+            end
+            if db ~= nil and db.hideRoleIcon then
+                ApplyRoleIcon(true)
+            end
             if db ~= nil and db.barTexture.enabled then
                 ApplyBarTextureToAll()
             end
@@ -1605,6 +1713,15 @@ function Overrides.Init(overridesDB)
             end
             if db ~= nil and db.hideHitIndicator then
                 ApplyHitIndicator(true)
+            end
+            if db ~= nil and db.hideGroupIndicator then
+                ApplyGroupIndicator(true)
+            end
+            if db ~= nil and db.hideRestLoop then
+                ApplyRestLoop(true)
+            end
+            if db ~= nil and db.hideRoleIcon then
+                ApplyRoleIcon(true)
             end
         elseif event == "UNIT_TARGET" then
             -- The ToT frames follow the target's/focus's target; recolor so
