@@ -117,9 +117,9 @@ function Config.GetDefaults()
             texture = "flat",
             healthClassColorEnabled = false,
             healthColorEnabled = false,
-            healthColorR = 1,
-            healthColorG = 0,
-            healthColorB = 0,
+            healthColorR = 0.2,
+            healthColorG = 0.85,
+            healthColorB = 0.2,
             manaColorEnabled = false,
             manaColorR = 0,
             manaColorG = 0.44,
@@ -218,12 +218,21 @@ function Config.NormalizeBarTexture(settings)
     end
     settings.healthClassColorEnabled = (settings.healthClassColorEnabled == true)
     settings.healthColorEnabled = (settings.healthColorEnabled == true)
-    settings.healthColorR =
-        Config.ClampValue(Config.ParseNumber(settings.healthColorR, 1), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
-    settings.healthColorG =
-        Config.ClampValue(Config.ParseNumber(settings.healthColorG, 0), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
-    settings.healthColorB =
-        Config.ClampValue(Config.ParseNumber(settings.healthColorB, 0), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
+    settings.healthColorR = Config.ClampValue(
+        Config.ParseNumber(settings.healthColorR, 0.2),
+        Config.LIMITS.colorMin,
+        Config.LIMITS.colorMax
+    )
+    settings.healthColorG = Config.ClampValue(
+        Config.ParseNumber(settings.healthColorG, 0.85),
+        Config.LIMITS.colorMin,
+        Config.LIMITS.colorMax
+    )
+    settings.healthColorB = Config.ClampValue(
+        Config.ParseNumber(settings.healthColorB, 0.2),
+        Config.LIMITS.colorMin,
+        Config.LIMITS.colorMax
+    )
     settings.manaColorEnabled = (settings.manaColorEnabled == true)
     settings.manaColorR =
         Config.ClampValue(Config.ParseNumber(settings.manaColorR, 0), Config.LIMITS.colorMin, Config.LIMITS.colorMax)
@@ -295,9 +304,9 @@ function Config.Normalize(db)
             texture = "flat",
             healthClassColorEnabled = false,
             healthColorEnabled = false,
-            healthColorR = 1,
-            healthColorG = 0,
-            healthColorB = 0,
+            healthColorR = 0.2,
+            healthColorG = 0.85,
+            healthColorB = 0.2,
             manaColorEnabled = false,
             manaColorR = 0,
             manaColorG = 0.44,
