@@ -721,7 +721,11 @@ end
 
 --- RAID_CLASS_COLORS lookup, restricted to player units: NPCs and other
 --- units without a player flag always get the fallback chain instead, even
---- if UnitClass ever returned data for them.
+--- if UnitClass ever returned data for them. UnitClass returns SECRET
+--- strings for identity-concealed player units (e.g. an unobserved
+--- target-of-target), and indexing RAID_CLASS_COLORS with a secret key
+--- errors - screen before every use and let the caller's fallback chain
+--- color the bar instead.
 ---@param unit string
 ---@return {r: number, g: number, b: number}|nil
 local function GetUnitClassColorTable(unit)
@@ -732,7 +736,10 @@ local function GetUnitClassColorTable(unit)
         return nil
     end
     local _, classFileName = UnitClass(unit)
-    local color = classFileName ~= nil and RAID_CLASS_COLORS[classFileName] or nil
+    if type(classFileName) ~= "string" or IsSecret(classFileName) then
+        return nil
+    end
+    local color = RAID_CLASS_COLORS[classFileName]
     if color ~= nil and color.r ~= nil then
         return color
     end
@@ -778,7 +785,13 @@ local function GetBarColor(unit, isHealth)
             end
         end
         if UnitSelectionColor ~= nil then
-            return UnitSelectionColor(unit)
+            -- Secret units (concealed identities) can return secret rgb,
+            -- which would poison SetStatusBarColor downstream; fall through
+            -- to the plain-white fallback instead.
+            local r, g, b = UnitSelectionColor(unit)
+            if not IsSecret(r) and not IsSecret(g) and not IsSecret(b) then
+                return r, g, b
+            end
         end
         return 1, 1, 1
     end
@@ -787,7 +800,9 @@ local function GetBarColor(unit, isHealth)
     end
     local powerType, powerToken = UnitPowerType(unit)
     local color = nil
-    if PowerBarColor ~= nil then
+    -- A secret power token/type would hit the same secret-key indexing
+    -- error as UnitClass above; skip the lookup and take the fallback.
+    if PowerBarColor ~= nil and not IsSecret(powerType) and not IsSecret(powerToken) then
         color = PowerBarColor[powerToken] or PowerBarColor[powerType]
     end
     if color ~= nil and color.r ~= nil then
