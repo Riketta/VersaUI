@@ -478,8 +478,9 @@ end
 --- TargetFrameTemplate family (the visible badge on camelot, an empty
 --- background plate on retail, where the sibling PvpIcon carries the badge),
 --- the player frame's main content on camelot, and the player's PvP-flag
---- countdown text next to the badge. Nil-guarded per element, so flavors
---- without a member simply contribute nothing.
+--- countdown text next to the badge. Nil-guarded per element; the timer
+--- additionally falls back to its global name, since some builds drift the
+--- parentKey while keeping the global (PlayerPVPTimerText) stable.
 ---@return any[]
 local function GetPvpIconRegions()
     local regions = {}
@@ -500,7 +501,7 @@ local function GetPvpIconRegions()
     if playerMain ~= nil and playerMain.PvpBackgroundIcon ~= nil then
         regions[#regions + 1] = playerMain.PvpBackgroundIcon
     end
-    local timerText = playerContent ~= nil and playerContent.PvpTimerText or nil
+    local timerText = (playerContent ~= nil and playerContent.PvpTimerText or nil) or GlobalFrame("PlayerPVPTimerText")
     if timerText ~= nil then
         regions[#regions + 1] = timerText
     end
